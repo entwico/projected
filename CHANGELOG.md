@@ -1,3 +1,10 @@
+# [2.1.0](https://github.com/smnbbrv/projected/compare/v2.0.1...v2.1.0) (2026-02-05)
+
+
+### Features
+
+* add maybeThen and maybeCatch ([12a8583](https://github.com/smnbbrv/projected/commit/12a8583eef4d75bb0713b7f138b55d7a3a0153fb))
+
 ## [2.0.1](https://github.com/smnbbrv/projected/compare/v2.0.0...v2.0.1) (2026-02-05)
 
 
