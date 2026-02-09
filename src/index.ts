@@ -7,3 +7,4 @@ export * from './projected-value/projected-value.js';
 export * from './projected-lazy-map/projected-lazy-map.js';
 
 export * from './utils/maybe-then.js';
+export * from './utils/deep-freeze.js';
