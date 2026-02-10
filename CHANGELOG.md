@@ -1,3 +1,10 @@
+# [2.2.0](https://github.com/smnbbrv/projected/compare/v2.1.0...v2.2.0) (2026-02-10)
+
+
+### Features
+
+* expose deepFreeze util ([9fad538](https://github.com/smnbbrv/projected/commit/9fad538547c9c175f1fcec9d086dc2419162c31c))
+
 # [2.1.0](https://github.com/smnbbrv/projected/compare/v2.0.1...v2.1.0) (2026-02-05)
 
 
