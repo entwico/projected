@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Collections of objects that rely on remote data sources. Hides the complexity of fetching and caching data from a remote source",
   "type": "module",
-  "author": "entwico GmbH",
+  "author": "admin@entwico.com",
   "license": "MIT",
   "repository": {
     "type": "git",
