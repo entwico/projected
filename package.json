@@ -3,16 +3,12 @@
   "version": "0.1.0",
   "description": "Collections of objects that rely on remote data sources. Hides the complexity of fetching and caching data from a remote source",
   "type": "module",
-  "author": "smnbbrv",
+  "author": "entwico GmbH",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/smnbbrv/projected.git"
+    "url": "https://github.com/entwico/projected"
   },
-  "bugs": {
-    "url": "https://github.com/smnbbrv/projected/issues"
-  },
-  "homepage": "https://github.com/smnbbrv/projected#readme",
   "scripts": {
     "start": "vite build --watch",
     "build": "vite build",
