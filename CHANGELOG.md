@@ -1,3 +1,10 @@
+## [2.2.1](https://github.com/entwico/projected/compare/v2.2.0...v2.2.1) (2026-04-17)
+
+
+### Bug Fixes
+
+* update license ([8433ca6](https://github.com/entwico/projected/commit/8433ca608260d2d593dbb60155e178248e8315c0))
+
 # [2.2.0](https://github.com/smnbbrv/projected/compare/v2.1.0...v2.2.0) (2026-02-10)
 
 
