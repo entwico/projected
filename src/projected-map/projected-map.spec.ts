@@ -1,6 +1,6 @@
-import { it, expect, describe } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { createProjectedMap, ProjectedMap } from './projected-map.js';
+import { ProjectedMap, createProjectedMap } from './projected-map.js';
 
 const testData = [
   { id: '1', title: 'title1' },
@@ -91,7 +91,7 @@ it('should fetch one', async () => {
   expect(res?.title).toBe('title3');
 });
 
-it("shouldn't get many if keys array is empty", async () => {
+it('shouldn\'t get many if keys array is empty', async () => {
   const projectedMap = new ProjectedMap<string, TestObject>({
     key: (item) => item.id,
     values: () => Promise.resolve(testData),

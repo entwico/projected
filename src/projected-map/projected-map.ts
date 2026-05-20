@@ -44,7 +44,8 @@ export type ProjectedMapOptions<K, V> = {
 
 /**
  * A collection of objects that are stored in memory, but being fetched from a remote source on demand.
- * This is useful when you have a fairly small collection of objects that you need to fetch and actualize from the remote data source.
+ * This is useful when you have a fairly small collection of objects that you need to fetch and actualize
+ * from the remote data source.
  */
 export class ProjectedMap<K, V> {
   private _state: CacheState<K, V> = { status: 'empty' };
@@ -94,7 +95,7 @@ export class ProjectedMap<K, V> {
    * @returns Array of values (sync if cached) or Promise that resolves to an array
    */
   getByKeysSparse(keys: K[]): MaybePromise<Maybe<V>[]> {
-    if (!keys.length) {
+    if (keys.length === 0) {
       return [];
     }
 
@@ -178,7 +179,7 @@ export class ProjectedMap<K, V> {
 
     // nothing cached or still pending
     if (state.status === 'empty' || state.status === 'pending') {
-      return this.triggerBackgroundRefresh(undefined);
+      return this.triggerBackgroundRefresh();
     }
 
     // have cached map - trigger refresh
@@ -207,18 +208,14 @@ export class ProjectedMap<K, V> {
       .then(() => this.values())
       .then((array) => this.arrayToMap(array))
       .then((map) => {
-        if (this.shouldCache) {
-          this._state = { status: 'resolved', map };
-        } else {
-          this._state = { status: 'empty' };
-        }
+        this._state = this.shouldCache ? { status: 'resolved', map } : { status: 'empty' };
 
         return map;
       })
-      .catch((err) => {
+      .catch((error) => {
         this._state = { status: 'empty' };
 
-        throw err;
+        throw error;
       });
 
     this._state = { status: 'pending', promise };
@@ -226,35 +223,23 @@ export class ProjectedMap<K, V> {
     return promise;
   }
 
-  private triggerBackgroundRefresh(staleMap: Map<K, V> | undefined): Promise<Map<K, V>> {
+  private triggerBackgroundRefresh(staleMap?: Map<K, V>): Promise<Map<K, V>> {
     const promise = Promise.resolve()
       .then(() => this.values())
       .then((array) => this.arrayToMap(array))
       .then((map) => {
-        if (this.shouldCache) {
-          this._state = { status: 'resolved', map };
-        } else {
-          this._state = { status: 'empty' };
-        }
+        this._state = this.shouldCache ? { status: 'resolved', map } : { status: 'empty' };
 
         return map;
       })
-      .catch((err) => {
+      .catch((error) => {
         // on error, keep stale map if we have one
-        if (staleMap && this.shouldCache) {
-          this._state = { status: 'resolved', map: staleMap };
-        } else {
-          this._state = { status: 'empty' };
-        }
+        this._state = staleMap && this.shouldCache ? { status: 'resolved', map: staleMap } : { status: 'empty' };
 
-        throw err;
+        throw error;
       });
 
-    if (staleMap) {
-      this._state = { status: 'refreshing', map: staleMap, promise };
-    } else {
-      this._state = { status: 'pending', promise };
-    }
+    this._state = staleMap ? { status: 'refreshing', map: staleMap, promise } : { status: 'pending', promise };
 
     return promise;
   }

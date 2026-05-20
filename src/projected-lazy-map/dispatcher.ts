@@ -76,7 +76,7 @@ export class Resolver<K, V> {
         pending.delete(key);
       });
 
-      if (!pending.size) {
+      if (pending.size === 0) {
         this.consumers.delete(consume);
         deferred.resolve(resolved);
       }
@@ -89,7 +89,7 @@ export class Resolver<K, V> {
     return deferred.promise;
   }
 
-  private async enqueue(keys: K[]) {
+  private enqueue(keys: K[]) {
     // if present, the key will remain on the same position in the queue even if it is added multiple times
     keys.forEach((key) => this.queue.add(key));
   }
@@ -116,7 +116,7 @@ export class Resolver<K, V> {
     // get relevant chunk of keys from the queue
     const keys = [...this.queue].slice(0, this.maxChunkSize);
 
-    if (!keys.length) {
+    if (keys.length === 0) {
       return;
     }
 

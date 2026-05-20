@@ -1,6 +1,6 @@
-import { it, expect, describe } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { createProjectedValue, ProjectedValue } from './projected-value.js';
+import { ProjectedValue, createProjectedValue } from './projected-value.js';
 
 const testValue = { id: '1', title: 'title1' };
 
@@ -61,7 +61,7 @@ it('should implement get', async () => {
 
 it('should allow undefined as a return value', async () => {
   const value = new ProjectedValue({
-    value: () => undefined,
+    value: () => {},
   });
 
   const res = await value.get();

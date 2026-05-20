@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { createProjectedLazyMap, ProjectedLazyMap } from './projected-lazy-map.js';
+import { ProjectedLazyMap, createProjectedLazyMap } from './projected-lazy-map.js';
 
 const testData = [
   { id: '1', title: 'title1' },
@@ -123,7 +123,7 @@ describe('fetcher', () => {
     expect(res?.title).toBe('title3');
   });
 
-  it("shouldn't get many if keys array is empty", async () => {
+  it('shouldn\'t get many if keys array is empty', async () => {
     const projectedMap = new ProjectedLazyMap<string, TestObject>({
       key: (item) => item.id,
       values: async (ids) => testData.filter((item) => ids.includes(item.id)),
@@ -266,7 +266,7 @@ describe('fetcher', () => {
     const projectedMap = new ProjectedLazyMap<string, TestObject>({
       key: (item) => item.id,
       values: async (ids) => {
-        throw new Error('fetch error ' + ids.join(','));
+        throw new Error(`fetch error ${ids.join(',')}`);
       },
     });
 

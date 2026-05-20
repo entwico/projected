@@ -6,7 +6,7 @@ import { deepFreeze } from '../utils/deep-freeze.js';
 import { defined } from '../utils/defined.js';
 import { NOOP_CACHE } from '../utils/noop-cache.js';
 
-import { type ResolverOptions, Resolver } from './dispatcher.js';
+import { Resolver, type ResolverOptions } from './dispatcher.js';
 
 export type ProjectedLazyMapOptions<K, V> = ResolverOptions<K, V> & {
   /**
@@ -57,7 +57,7 @@ export class ProjectedLazyMap<K, V> {
    * @returns Array of values (sync if all cached) or Promise that resolves to an array
    */
   getByKeysSparse(keys: K[]): MaybePromise<Maybe<V>[]> {
-    if (!keys.length) {
+    if (keys.length === 0) {
       return [];
     }
 
@@ -75,7 +75,7 @@ export class ProjectedLazyMap<K, V> {
     }
 
     // all cached - return sync
-    if (!missingKeys.length) {
+    if (missingKeys.length === 0) {
       return keys.map((key) => foundMap.get(key));
     }
 

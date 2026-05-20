@@ -35,7 +35,8 @@ export type ProjectedValueOptions<V> = {
 
 /**
  * A value being fetched from a remote source on demand.
- * This is useful when you have a single value that is expensive to fetch and you want to fetch it only when it is needed.
+ * This is useful when you have a single value that is expensive to fetch and you want to fetch it only
+ * when it is needed.
  */
 export class ProjectedValue<V> {
   private _state: CacheState<V> = { status: 'empty' };
@@ -95,7 +96,7 @@ export class ProjectedValue<V> {
 
     // nothing cached or still pending
     if (state.status === 'empty' || state.status === 'pending') {
-      return this.triggerBackgroundRefresh(undefined);
+      return this.triggerBackgroundRefresh();
     }
 
     // have cached value - trigger refresh
@@ -108,18 +109,14 @@ export class ProjectedValue<V> {
       .then((v) => {
         const value = this.protection === 'freeze' ? deepFreeze(v) : v;
 
-        if (this.shouldCache) {
-          this._state = { status: 'resolved', value };
-        } else {
-          this._state = { status: 'empty' };
-        }
+        this._state = this.shouldCache ? { status: 'resolved', value } : { status: 'empty' };
 
         return value;
       })
-      .catch((err) => {
+      .catch((error) => {
         this._state = { status: 'empty' };
 
-        throw err;
+        throw error;
       });
 
     this._state = { status: 'pending', promise };
@@ -127,36 +124,24 @@ export class ProjectedValue<V> {
     return promise;
   }
 
-  private triggerBackgroundRefresh(staleValue: V | undefined): Promise<V> {
+  private triggerBackgroundRefresh(staleValue?: V): Promise<V> {
     const promise = Promise.resolve()
       .then(() => this.valueFn())
       .then((v) => {
         const value = this.protection === 'freeze' ? deepFreeze(v) : v;
 
-        if (this.shouldCache) {
-          this._state = { status: 'resolved', value };
-        } else {
-          this._state = { status: 'empty' };
-        }
+        this._state = this.shouldCache ? { status: 'resolved', value } : { status: 'empty' };
 
         return value;
       })
-      .catch((err) => {
+      .catch((error) => {
         // on error, keep stale value if we have one
-        if (staleValue !== undefined && this.shouldCache) {
-          this._state = { status: 'resolved', value: staleValue };
-        } else {
-          this._state = { status: 'empty' };
-        }
+        this._state = staleValue !== undefined && this.shouldCache ? { status: 'resolved', value: staleValue } : { status: 'empty' };
 
-        throw err;
+        throw error;
       });
 
-    if (staleValue !== undefined) {
-      this._state = { status: 'refreshing', value: staleValue, promise };
-    } else {
-      this._state = { status: 'pending', promise };
-    }
+    this._state = staleValue === undefined ? { status: 'pending', promise } : { status: 'refreshing', value: staleValue, promise };
 
     return promise;
   }

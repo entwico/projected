@@ -322,7 +322,7 @@ describe('Real-world scenario: nested validation (15k promises)', () => {
   bench('15k cached lookups - current (async)', async () => {
     const asyncGet = async (key: string) => cache.get(key);
 
-    for (let i = 0; i < 15000; i++) {
+    for (let i = 0; i < 15_000; i++) {
       await asyncGet(`rule-${i % 500}`);
     }
   });
@@ -330,7 +330,7 @@ describe('Real-world scenario: nested validation (15k promises)', () => {
   bench('15k cached lookups - sync when possible', () => {
     const syncGet = (key: string) => cache.get(key);
 
-    for (let i = 0; i < 15000; i++) {
+    for (let i = 0; i < 15_000; i++) {
       syncGet(`rule-${i % 500}`);
     }
   });
@@ -349,7 +349,7 @@ describe('Real-world scenario: nested validation (15k promises)', () => {
       return Promise.resolve({ valid: false, message: 'not found' }); // async fallback
     };
 
-    for (let i = 0; i < 15000; i++) {
+    for (let i = 0; i < 15_000; i++) {
       const result = maybeAsyncGet(`rule-${i % 500}`);
 
       if (result instanceof Promise) {
