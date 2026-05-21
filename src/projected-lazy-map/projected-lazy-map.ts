@@ -1,8 +1,7 @@
 import type { ProjectedMapCache } from '../types/cache.js';
 import type { MaybePromise } from '../types/maybe-promise.js';
 import type { Maybe } from '../types/maybe.js';
-import type { Protection } from '../types/protection.js';
-import { deepFreeze } from '../utils/deep-freeze.js';
+import type { ReadonlyDeep } from '../types/readonly-deep.js';
 import { defined } from '../utils/defined.js';
 import { NOOP_CACHE } from '../utils/noop-cache.js';
 
@@ -17,14 +16,6 @@ export type ProjectedLazyMapOptions<K, V> = ResolverOptions<K, V> & {
    * @default true
    */
   cache?: boolean | ProjectedMapCache<K, V>;
-
-  /**
-   * Should the values be protected from modification
-   * - 'freeze' - values are deeply frozen
-   * - 'none' - values are not protected
-   * @default 'none'
-   */
-  protection?: Maybe<Protection>;
 };
 
 interface GetOptions {
@@ -38,11 +29,9 @@ interface GetOptions {
 export class ProjectedLazyMap<K, V> {
   private readonly cache: ProjectedMapCache<K, V> = new Map();
   private readonly fetcher: Resolver<K, V>;
-  private readonly protection: Maybe<Protection>;
 
-  constructor({ cache, protection, ...fetcherOptions }: ProjectedLazyMapOptions<K, V>) {
+  constructor({ cache, ...fetcherOptions }: ProjectedLazyMapOptions<K, V>) {
     this.fetcher = new Resolver(fetcherOptions);
-    this.protection = protection ?? 'none';
 
     if (cache === false) {
       this.cache = NOOP_CACHE;
@@ -56,7 +45,7 @@ export class ProjectedLazyMap<K, V> {
    * @param keys Array of keys
    * @returns Array of values (sync if all cached) or Promise that resolves to an array
    */
-  getByKeysSparse(keys: K[]): MaybePromise<Maybe<V>[]> {
+  getByKeysSparse(keys: K[]): MaybePromise<ReadonlyArray<Maybe<ReadonlyDeep<V>>>> {
     if (keys.length === 0) {
       return [];
     }
@@ -76,7 +65,7 @@ export class ProjectedLazyMap<K, V> {
 
     // all cached - return sync
     if (missingKeys.length === 0) {
-      return keys.map((key) => foundMap.get(key));
+      return keys.map((key) => foundMap.get(key) as ReadonlyDeep<V> | undefined);
     }
 
     // need to fetch missing keys
@@ -86,15 +75,11 @@ export class ProjectedLazyMap<K, V> {
           return;
         }
 
-        if (this.protection === 'freeze') {
-          deepFreeze(value);
-        }
-
         foundMap.set(valueKey, value);
         this.cache.set(valueKey, value);
       });
 
-      return keys.map((key) => foundMap.get(key));
+      return keys.map((key) => foundMap.get(key) as ReadonlyDeep<V> | undefined);
     });
   }
 
@@ -103,7 +88,7 @@ export class ProjectedLazyMap<K, V> {
    * @param keys Array of keys
    * @returns Array of values (sync if all cached) or Promise that resolves to an array
    */
-  getByKeys(keys: K[]): MaybePromise<V[]> {
+  getByKeys(keys: K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
     const sparse = this.getByKeysSparse(keys);
 
     if (sparse instanceof Promise) {
@@ -118,37 +103,35 @@ export class ProjectedLazyMap<K, V> {
    * @param key Key
    * @returns Value (sync if cached) or Promise that resolves to a value
    */
-  getByKey(key: K): MaybePromise<Maybe<V>> {
+  getByKey(key: K): MaybePromise<Maybe<ReadonlyDeep<V>>> {
     const hit = this.cache.get(key);
 
     if (hit) {
-      return hit;
+      return hit as ReadonlyDeep<V>;
     }
 
     return this.fetcher.resolve([key]).then((fetchedMap) => {
       const value = fetchedMap.get(key);
 
       if (value) {
-        if (this.protection === 'freeze') {
-          deepFreeze(value);
-        }
-
         this.cache.set(key, value);
       }
 
-      return value;
+      return value as ReadonlyDeep<V> | undefined;
     });
   }
 
-  get(keyOrKeys: K[], options?: GetOptions): MaybePromise<V[]>;
-  get(keyOrKeys: K, options?: GetOptions): MaybePromise<Maybe<V>>;
+  get(keyOrKeys: K[], options?: GetOptions): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>>;
+  get(keyOrKeys: K, options?: GetOptions): MaybePromise<Maybe<ReadonlyDeep<V>>>;
 
   /**
    * Mixed get method
    * @param keyOrKeys Key or array of keys
    * @returns Value or array of values (sync if cached) or Promise
    */
-  get(keyOrKeys: K | K[]): MaybePromise<V[] | Maybe<V>> {
+  get(
+    keyOrKeys: K | K[],
+  ): MaybePromise<ReadonlyArray<ReadonlyDeep<V>> | Maybe<ReadonlyDeep<V>>> {
     if (Array.isArray(keyOrKeys)) {
       return this.getByKeys(keyOrKeys);
     }
@@ -180,8 +163,8 @@ export class ProjectedLazyMap<K, V> {
     this.cache.clear();
   }
 
-  refresh(key: K): Promise<Maybe<V>>;
-  refresh(keys: K[]): Promise<Maybe<V>[]>;
+  refresh(key: K): Promise<Maybe<ReadonlyDeep<V>>>;
+  refresh(keys: K[]): Promise<ReadonlyArray<Maybe<ReadonlyDeep<V>>>>;
 
   /**
    * Refresh value(s) for the given key(s).
@@ -197,7 +180,9 @@ export class ProjectedLazyMap<K, V> {
    * @param keyOrKeys Key or array of keys to refresh
    * @returns Promise that resolves to the fresh value(s), or rejects on error
    */
-  async refresh(keyOrKeys: K | K[]): Promise<Maybe<V> | Maybe<V>[]> {
+  async refresh(
+    keyOrKeys: K | K[],
+  ): Promise<Maybe<ReadonlyDeep<V>> | ReadonlyArray<Maybe<ReadonlyDeep<V>>>> {
     const keys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
 
     if (keys.length === 0) {
@@ -214,14 +199,10 @@ export class ProjectedLazyMap<K, V> {
         continue;
       }
 
-      if (this.protection === 'freeze') {
-        deepFreeze(value);
-      }
-
       this.cache.set(key, value);
     }
 
-    const values = keys.map((key) => fetchedMap.get(key));
+    const values = keys.map((key) => fetchedMap.get(key) as ReadonlyDeep<V> | undefined);
 
     if (Array.isArray(keyOrKeys)) {
       return values;

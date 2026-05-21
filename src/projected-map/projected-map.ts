@@ -1,18 +1,19 @@
 import type { MaybePromise } from '../types/maybe-promise.js';
 import type { Maybe } from '../types/maybe.js';
-import type { Protection } from '../types/protection.js';
-import { deepFreeze } from '../utils/deep-freeze.js';
+import type { ReadonlyDeep } from '../types/readonly-deep.js';
 import { Deferred } from '../utils/deferred.js';
 import { defined } from '../utils/defined.js';
 
 type CacheState<K, V> =
   | { status: 'empty' }
-  | { status: 'pending'; promise: Promise<Map<K, V>> }
+  | { status: 'pending'; promise: Promise<ReadonlyMap<K, ReadonlyDeep<V>>> }
   | { status: 'resolved'; map: Map<K, V> };
 
 type Inflight<K, V> =
-  | { type: 'full'; promise: Promise<Map<K, V>> }
-  | { type: 'partial'; promise: Promise<Map<K, V>> };
+  | { type: 'full'; promise: Promise<ReadonlyMap<K, ReadonlyDeep<V>>> }
+  | { type: 'partial'; promise: Promise<ReadonlyMap<K, ReadonlyDeep<V>>> };
+
+type ResolvedMap<K, V> = ReadonlyMap<K, ReadonlyDeep<V>>;
 
 export type ProjectedMapOptions<K, V> = {
   /**
@@ -46,14 +47,6 @@ export type ProjectedMapOptions<K, V> = {
   sort?: Maybe<(a: V, b: V) => number>;
 
   /**
-   * Should the values in cache be protected from modification
-   * - 'freeze' - values are deeply frozen
-   * - 'none' - values are not protected
-   * @default 'none'
-   */
-  protection?: Maybe<Protection>;
-
-  /**
    * Cache implementation (optional)
    * - false - no cache
    * - true - use default cache
@@ -78,14 +71,13 @@ export class ProjectedMap<K, V> {
   private readonly _key: (item: V) => K;
   private readonly _values: ProjectedMapOptions<K, V>['values'];
   private readonly _sort: Maybe<(a: V, b: V) => number>;
-  private readonly _protection: Maybe<Protection>;
   private readonly _shouldCache: boolean;
 
   // refresh state machine
   private _inflight: Inflight<K, V> | null = null;
   private _pendingFull = false;
   private _pendingPartial = new Set<K>();
-  private _pendingDeferred: Deferred<Map<K, V>> | null = null;
+  private _pendingDeferred: Deferred<ResolvedMap<K, V>> | null = null;
   private _debounceTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * keys deleted via `delete()` while a refresh was in flight.
@@ -96,11 +88,10 @@ export class ProjectedMap<K, V> {
    */
   private _tombstones = new Set<K>();
 
-  constructor({ key, values, sort, protection, cache }: ProjectedMapOptions<K, V>) {
+  constructor({ key, values, sort, cache }: ProjectedMapOptions<K, V>) {
     this._key = key;
     this._values = values;
     this._sort = sort;
-    this._protection = protection ?? 'none';
     this._shouldCache = cache ?? true;
   }
 
@@ -108,14 +99,14 @@ export class ProjectedMap<K, V> {
    * Get all values as a map
    * @returns Map of all values (sync if cached) or Promise that resolves to a map
    */
-  getAllAsMap(): MaybePromise<Map<K, V>> {
+  getAllAsMap(): MaybePromise<ResolvedMap<K, V>> {
     const cache = this.getCache();
 
     if (cache instanceof Promise) {
       return cache.then((map) => new Map(map));
     }
 
-    return new Map(cache);
+    return new Map(cache) as ResolvedMap<K, V>;
   }
 
   /**
@@ -124,7 +115,7 @@ export class ProjectedMap<K, V> {
    * added via partial refresh appended at the end.
    * @returns Array of values (sync if cached) or Promise that resolves to an array
    */
-  getAll(): MaybePromise<V[]> {
+  getAll(): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
     const cache = this.getCache();
 
     if (cache instanceof Promise) {
@@ -139,7 +130,7 @@ export class ProjectedMap<K, V> {
    * @param keys Array of keys
    * @returns Array of values (sync if cached) or Promise that resolves to an array
    */
-  getByKeysSparse(keys: K[]): MaybePromise<Maybe<V>[]> {
+  getByKeysSparse(keys: K[]): MaybePromise<ReadonlyArray<Maybe<ReadonlyDeep<V>>>> {
     if (keys.length === 0) {
       return [];
     }
@@ -158,7 +149,7 @@ export class ProjectedMap<K, V> {
    * @param keys Array of keys
    * @returns Array of values (sync if cached) or Promise that resolves to an array
    */
-  getByKeys(keys: K[]): MaybePromise<V[]> {
+  getByKeys(keys: K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
     const sparse = this.getByKeysSparse(keys);
 
     if (sparse instanceof Promise) {
@@ -173,7 +164,7 @@ export class ProjectedMap<K, V> {
    * @param key Key
    * @returns Value (sync if cached) or Promise that resolves to a value
    */
-  getByKey(key: K): MaybePromise<Maybe<V>> {
+  getByKey(key: K): MaybePromise<Maybe<ReadonlyDeep<V>>> {
     const cache = this.getCache();
 
     if (cache instanceof Promise) {
@@ -183,15 +174,15 @@ export class ProjectedMap<K, V> {
     return cache.get(key);
   }
 
-  get(keyOrKeys: K[]): MaybePromise<V[]>;
-  get(keyOrKeys: K): MaybePromise<Maybe<V>>;
+  get(keyOrKeys: K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>>;
+  get(keyOrKeys: K): MaybePromise<Maybe<ReadonlyDeep<V>>>;
 
   /**
    * Mixed get method
    * @param keyOrKeys Key or array of keys
    * @returns Value or array of values (sync if cached) or Promise
    */
-  get(keyOrKeys: K | K[]): MaybePromise<V[] | Maybe<V>> {
+  get(keyOrKeys: K | K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>> | Maybe<ReadonlyDeep<V>>> {
     if (Array.isArray(keyOrKeys)) {
       return this.getByKeys(keyOrKeys);
     }
@@ -234,8 +225,8 @@ export class ProjectedMap<K, V> {
     this._state = { status: 'empty' };
   }
 
-  refresh(): Promise<Map<K, V>>;
-  refresh(keyOrKeys: K | K[]): Promise<Map<K, V>>;
+  refresh(): Promise<ResolvedMap<K, V>>;
+  refresh(keyOrKeys: K | K[]): Promise<ResolvedMap<K, V>>;
 
   /**
    * Refresh values using stale-while-revalidate pattern.
@@ -258,7 +249,7 @@ export class ProjectedMap<K, V> {
    *
    * @returns Promise that resolves to the post-operation resolved map.
    */
-  refresh(keyOrKeys?: K | K[]): Promise<Map<K, V>> {
+  refresh(keyOrKeys?: K | K[]): Promise<ResolvedMap<K, V>> {
     if (keyOrKeys === undefined) {
       return this.scheduleFull();
     }
@@ -274,11 +265,14 @@ export class ProjectedMap<K, V> {
     return this.schedulePartial([keyOrKeys]);
   }
 
-  private getCache(): MaybePromise<Map<K, V>> {
+  private getCache(): MaybePromise<ResolvedMap<K, V>> {
     const state = this._state;
 
     if (state.status === 'resolved') {
-      return state.map;
+      // safe: callers see ReadonlyDeep<V>, the underlying mutable Map is only mutated
+      // internally via mergePartial / buildFullMap. Cast widens variance restriction
+      // on Map.forEach's callback parameter.
+      return state.map as unknown as ResolvedMap<K, V>;
     }
 
     if (state.status === 'pending') {
@@ -293,7 +287,7 @@ export class ProjectedMap<K, V> {
   // refresh state machine
   // ---------------------------------------------------------------------------
 
-  private scheduleFull(): Promise<Map<K, V>> {
+  private scheduleFull(): Promise<ResolvedMap<K, V>> {
     // a full refresh is already in flight — reuse its promise
     if (this._inflight?.type === 'full') {
       return this._inflight.promise;
@@ -316,7 +310,7 @@ export class ProjectedMap<K, V> {
     return this.startFull();
   }
 
-  private schedulePartial(keys: K[]): Promise<Map<K, V>> {
+  private schedulePartial(keys: K[]): Promise<ResolvedMap<K, V>> {
     // no resolved map to patch into — fall back to full
     if (this._state.status !== 'resolved') {
       return this.scheduleFull();
@@ -385,16 +379,16 @@ export class ProjectedMap<K, V> {
     }
   }
 
-  private getOrCreatePendingDeferred(): Deferred<Map<K, V>> {
+  private getOrCreatePendingDeferred(): Deferred<ResolvedMap<K, V>> {
     if (this._pendingDeferred === null) {
-      this._pendingDeferred = new Deferred<Map<K, V>>();
+      this._pendingDeferred = new Deferred<ResolvedMap<K, V>>();
     }
 
     return this._pendingDeferred;
   }
 
-  private startFull(): Promise<Map<K, V>> {
-    const deferred = this._pendingDeferred ?? new Deferred<Map<K, V>>();
+  private startFull(): Promise<ResolvedMap<K, V>> {
+    const deferred = this._pendingDeferred ?? new Deferred<ResolvedMap<K, V>>();
 
     this._pendingDeferred = null;
 
@@ -419,7 +413,7 @@ export class ProjectedMap<K, V> {
         this._inflight = null;
         this.drain();
 
-        deferred.resolve(map);
+        deferred.resolve(map as unknown as ResolvedMap<K, V>);
       },
       (error) => {
         // keep stale on error; if there was no stale (state still pending), reset to empty
@@ -440,8 +434,8 @@ export class ProjectedMap<K, V> {
     return deferred.promise;
   }
 
-  private startPartial(): Promise<Map<K, V>> {
-    const deferred = this._pendingDeferred ?? new Deferred<Map<K, V>>();
+  private startPartial(): Promise<ResolvedMap<K, V>> {
+    const deferred = this._pendingDeferred ?? new Deferred<ResolvedMap<K, V>>();
 
     this._pendingDeferred = null;
 
@@ -460,7 +454,7 @@ export class ProjectedMap<K, V> {
         this._inflight = null;
         this.drain();
 
-        deferred.resolve(map);
+        deferred.resolve(map as unknown as ResolvedMap<K, V>);
       },
       (error) => {
         // tombstones for this refresh window are spent
@@ -506,7 +500,7 @@ export class ProjectedMap<K, V> {
       if (value === undefined) {
         map.delete(key);
       } else {
-        map.set(key, this._protection === 'freeze' ? deepFreeze(value) : value);
+        map.set(key, value);
       }
     }
 
@@ -541,7 +535,7 @@ export class ProjectedMap<K, V> {
         continue;
       }
 
-      map.set(key, this._protection === 'freeze' ? deepFreeze(item) : item);
+      map.set(key, item);
     }
 
     // tombstones for this refresh window are spent

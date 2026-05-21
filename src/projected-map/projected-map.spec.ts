@@ -1037,21 +1037,6 @@ describe('kitchen sink', () => {
     expect(new Set(dispatchedKeys[0] as string[])).toEqual(new Set(['1', '2']));
   });
 
-  it('should freeze partial-merged values when protection is freeze', async () => {
-    const map = new ProjectedMap<string, TestObject>({
-      key: (item) => item.id,
-      values: (keys) => (keys === undefined ? testData : testData.filter((i) => keys.includes(i.id))),
-      protection: 'freeze',
-    });
-
-    await map.refresh();
-    await map.refresh(['2']);
-
-    const item = map.getByKey('2') as TestObject;
-
-    expect(Object.isFrozen(item)).toBe(true);
-  });
-
   it('should not resurrect a key when delete races with an in-flight partial refresh', async () => {
     // delete during in-flight refresh tombstones the key — the partial result is dropped
     // for that key, and a retry refresh is scheduled to confirm the post-delete state.
