@@ -184,29 +184,42 @@ export class ProjectedLazyMap<K, V> {
   refresh(keys: K[]): Promise<Maybe<V>[]>;
 
   /**
-   * Refresh value(s) using stale-while-revalidate pattern.
-   * - Triggers a background refresh for the specified key(s)
-   * - Updates cache entries only when refresh succeeds
-   * - On refresh error, keeps serving the stale values
+   * Refresh value(s) for the given key(s).
+   *
+   * - Triggers a fetch for the specified key(s) via the resolver.
+   * - For each requested key:
+   *   - if the result contains it, the cache entry is updated.
+   *   - if the result does not contain it (server says it no longer exists),
+   *     the cache entry is **evicted**.
+   * - On fetch error, cache entries are left untouched (stale stays stale) and the
+   *   returned promise rejects.
+   *
    * @param keyOrKeys Key or array of keys to refresh
    * @returns Promise that resolves to the fresh value(s), or rejects on error
    */
   async refresh(keyOrKeys: K | K[]): Promise<Maybe<V> | Maybe<V>[]> {
     const keys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
 
+    if (keys.length === 0) {
+      return [];
+    }
+
     const fetchedMap = await this.fetcher.resolve(keys);
 
-    fetchedMap.forEach((value, valueKey) => {
-      if (!value) {
-        return;
+    for (const key of keys) {
+      const value = fetchedMap.get(key);
+
+      if (value === undefined) {
+        this.cache.delete(key);
+        continue;
       }
 
       if (this.protection === 'freeze') {
         deepFreeze(value);
       }
 
-      this.cache.set(valueKey, value);
-    });
+      this.cache.set(key, value);
+    }
 
     const values = keys.map((key) => fetchedMap.get(key));
 

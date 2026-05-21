@@ -518,4 +518,75 @@ describe('refresh', () => {
     // cache should still have the original value
     expect(cache.get('3')).toEqual(testData[2]);
   });
+
+  it('should evict cache entry when refresh returns nothing for a single key', async () => {
+    let liveIds = ['1', '2', '3'];
+    const cache = new Map<string, TestObject>();
+
+    const map = new ProjectedLazyMap<string, TestObject>({
+      key: (item) => item.id,
+      values: (ids) => testData.filter((item) => ids.includes(item.id) && liveIds.includes(item.id)),
+      cache,
+    });
+
+    await map.getByKey('2');
+
+    expect(cache.has('2')).toBe(true);
+
+    // upstream deletes '2'
+    liveIds = ['1', '3'];
+
+    const fresh = await map.refresh('2');
+
+    expect(fresh).toBeUndefined();
+    expect(cache.has('2')).toBe(false);
+  });
+
+  it('should evict cache entries when refresh returns nothing for some of the requested keys', async () => {
+    let liveIds = ['1', '2', '3'];
+    const cache = new Map<string, TestObject>();
+
+    const map = new ProjectedLazyMap<string, TestObject>({
+      key: (item) => item.id,
+      values: (ids) => testData.filter((item) => ids.includes(item.id) && liveIds.includes(item.id)),
+      cache,
+    });
+
+    await map.getByKeys(['1', '2', '3']);
+
+    expect(cache.has('1')).toBe(true);
+    expect(cache.has('2')).toBe(true);
+    expect(cache.has('3')).toBe(true);
+
+    // upstream deletes '2'
+    liveIds = ['1', '3'];
+
+    const fresh = await map.refresh(['1', '2', '3']);
+
+    expect(fresh[0]).toBeTruthy();
+    expect(fresh[1]).toBeUndefined();
+    expect(fresh[2]).toBeTruthy();
+
+    expect(cache.has('1')).toBe(true);
+    expect(cache.has('2')).toBe(false);
+    expect(cache.has('3')).toBe(true);
+  });
+
+  it('should no-op on refresh([])', async () => {
+    let callCount = 0;
+
+    const map = new ProjectedLazyMap<string, TestObject>({
+      key: (item) => item.id,
+      values: (ids) => {
+        callCount++;
+
+        return testData.filter((item) => ids.includes(item.id));
+      },
+    });
+
+    const fresh = await map.refresh([]);
+
+    expect(fresh).toEqual([]);
+    expect(callCount).toBe(0);
+  });
 });

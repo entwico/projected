@@ -42,11 +42,11 @@ npm i projected
 Caches a single value fetched from a remote source.
 
 ```ts
-import { ProjectedValue } from 'projected';
+import { ProjectedValue } from "projected";
 
 const config = new ProjectedValue({
   value: async () => {
-    const response = await fetch('/api/config');
+    const response = await fetch("/api/config");
     return response.json();
   },
 });
@@ -94,55 +94,105 @@ if (result instanceof Promise) {
 Caches an entire collection, fetched all at once. Unlike `ProjectedValue`, it allows accessing individual items by key. Unlike `ProjectedLazyMap`, it provides access to all items at once. Best for small, frequently-accessed collections where you need both.
 
 ```ts
-import { ProjectedMap } from 'projected';
+import { ProjectedMap } from "projected";
 
 type Country = { code: string; name: string };
 
 const countries = new ProjectedMap<string, Country>({
   key: (country) => country.code,
-  values: async () => {
-    const response = await fetch('/api/countries');
+  values: async (keys) => {
+    const url = keys ? `/api/countries?codes=${keys.join(",")}` : "/api/countries";
+    const response = await fetch(url);
     return response.json();
   },
 });
 
 // fetches all countries, caches them
-await countries.getByKey('US'); // { code: 'US', name: 'United States' }
+await countries.getByKey("US"); // { code: 'US', name: 'United States' }
 
 // all subsequent calls return T (not Promise) - can still use await
-await countries.getByKey('DE');
-await countries.getByKeys(['FR', 'IT']);
+await countries.getByKey("DE");
+await countries.getByKeys(["FR", "IT"]);
 await countries.getAll();
 await countries.getAllAsMap();
 ```
 
+### Partial Refresh
+
+`refresh(key | keys)` re-fetches just the requested entries via `values(keys)` and merges
+them into the cached map. Requested keys absent from the result are deleted — which is
+how you propagate upstream deletions:
+
+```ts
+// re-fetch a single country
+await countries.refresh("US");
+
+// re-fetch many (rapid calls within ~50ms are coalesced into one fetch)
+await Promise.all([countries.refresh("US"), countries.refresh(["DE", "FR"])]);
+
+// if the upstream no longer returns 'US', it's removed from the cached map
+```
+
+Coalescing rules:
+
+- Rapid `refresh(keys)` calls within a 50ms window are merged into a single fetch.
+- A `refresh()` (full) requested while a partial is in flight is queued and runs after the partial completes; it subsumes any pending partial keys.
+- A `refresh(keys)` called against a map that has not yet been resolved falls back to a full refresh.
+
+### Sort
+
+Optional `sort` is applied on every materialization — both full refresh and partial merge —
+so iteration order stays stable as entries are added or updated:
+
+```ts
+const countries = new ProjectedMap<string, Country>({
+  key: (country) => country.code,
+  values: async (keys) => fetchCountries(keys),
+  sort: (a, b) => a.name.localeCompare(b.name),
+});
+
+await countries.getAll(); // sorted by name
+```
+
+### Local Delete
+
+`delete(key | keys)` removes entries from the cached map without triggering a fetch.
+Useful when the entry is gone: the change can be reflected immediately.
+
+```ts
+await countries.delete("US");
+await countries.delete(["DE", "FR"]);
+```
+
 ### Methods
 
-| Method                  | Return Type                          | Description                                             |
-| ----------------------- | ------------------------------------ | ------------------------------------------------------- |
-| `getByKey(key)`         | `T \| undefined \| Promise<...>`     | Get single item by key                                  |
-| `getByKeys(keys)`       | `T[] \| Promise<T[]>`                | Get multiple items (skips missing)                      |
-| `getByKeysSparse(keys)` | `(T \| undefined)[] \| Promise<...>` | Get multiple items (keeps order, undefined for missing) |
-| `getAll()`              | `T[] \| Promise<T[]>`                | Get all items as array                                  |
-| `getAllAsMap()`         | `Map<K, T> \| Promise<...>`          | Get all items as Map                                    |
-| `get(keyOrKeys)`        | mixed                                | Shorthand for `getByKey` or `getByKeys`                 |
-| `refresh()`             | `Promise<Map<K, T>>`                 | Fetches fresh map, updates cache, rejects on error      |
-| `clear()`               | `void`                               | Clears cache                                            |
+| Method                  | Return Type                          | Description                                                   |
+| ----------------------- | ------------------------------------ | ------------------------------------------------------------- |
+| `getByKey(key)`         | `T \| undefined \| Promise<...>`     | Get single item by key                                        |
+| `getByKeys(keys)`       | `T[] \| Promise<T[]>`                | Get multiple items (skips missing)                            |
+| `getByKeysSparse(keys)` | `(T \| undefined)[] \| Promise<...>` | Get multiple items (keeps order, undefined for missing)       |
+| `getAll()`              | `T[] \| Promise<T[]>`                | Get all items as array (order follows `sort` if configured)   |
+| `getAllAsMap()`         | `Map<K, T> \| Promise<...>`          | Get all items as Map                                          |
+| `get(keyOrKeys)`        | mixed                                | Shorthand for `getByKey` or `getByKeys`                       |
+| `refresh()`             | `Promise<Map<K, T>>`                 | Full re-fetch via `values(undefined)`                         |
+| `refresh(keyOrKeys)`    | `Promise<Map<K, T>>`                 | Partial re-fetch via `values(keys)`; missing keys are evicted |
+| `delete(keyOrKeys)`     | `void`                               | Remove entries from the cached map locally (no fetch)         |
+| `clear()`               | `void`                               | Clears cache                                                  |
 
 ## ProjectedLazyMap
 
 Fetches items on-demand with automatic request batching. Best for large collections where you only need specific items.
 
 ```ts
-import { ProjectedLazyMap } from 'projected';
+import { ProjectedLazyMap } from "projected";
 
 type User = { id: string; name: string };
 
 const users = new ProjectedLazyMap<string, User>({
   key: (user) => user.id,
+  // return only the users that exist — keys absent from the result are treated as missing
   values: async (ids) => {
-    // called with batched ids, e.g., ['user1', 'user2', 'user3']
-    const response = await fetch(`/api/users?ids=${ids.join(',')}`);
+    const response = await fetch(`/api/users?ids=${ids.join(",")}`);
     return response.json();
   },
   delay: 50, // batch requests within 50ms window (default)
@@ -151,14 +201,10 @@ const users = new ProjectedLazyMap<string, User>({
 });
 
 // these three calls within 50ms get batched into one request
-const [user1, user2, user3] = await Promise.all([
-  users.getByKey('user1'),
-  users.getByKey('user2'),
-  users.getByKey('user3'),
-]);
+const [user1, user2, user3] = await Promise.all([users.getByKey("user1"), users.getByKey("user2"), users.getByKey("user3")]);
 
 // subsequent calls for cached users return T (not Promise)
-await users.getByKey('user1');
+await users.getByKey("user1");
 ```
 
 ### Request Batching
@@ -167,9 +213,9 @@ When multiple `getByKey()` calls happen within the `delay` window, they're combi
 
 ```ts
 // all these calls within 50ms...
-users.getByKey('a');
-users.getByKey('b');
-users.getByKey('c');
+users.getByKey("a");
+users.getByKey("b");
+users.getByKey("c");
 
 // ...result in one values() call with ['a', 'b', 'c']
 ```
@@ -179,7 +225,7 @@ users.getByKey('c');
 Use any cache implementing `ProjectedMapCache` interface (compatible with `Map`, `lru-cache`, etc.):
 
 ```ts
-import { LRUCache } from 'lru-cache';
+import { LRUCache } from "lru-cache";
 
 const users = new ProjectedLazyMap<string, User>({
   key: (user) => user.id,
@@ -200,15 +246,15 @@ const users = new ProjectedLazyMap<string, User>({
 
 ### Methods
 
-| Method                  | Return Type                                     | Description                                      |
-| ----------------------- | ----------------------------------------------- | ------------------------------------------------ |
-| `getByKey(key)`         | `T \| undefined \| Promise<...>`                | Get single item (sync if cached)                 |
-| `getByKeys(keys)`       | `T[] \| Promise<T[]>`                           | Get multiple items (sync if all cached)          |
-| `getByKeysSparse(keys)` | `(T \| undefined)[] \| Promise<...>`            | Get multiple items preserving order              |
-| `get(keyOrKeys)`        | mixed                                           | Shorthand for `getByKey` or `getByKeys`          |
-| `refresh(keyOrKeys)`    | `Promise<T \| undefined \| (T \| undefined)[]>` | Fetches fresh value(s), updates cache on success |
-| `delete(keyOrKeys)`     | `void`                                          | Removes item(s) from cache                       |
-| `clear()`               | `void`                                          | Clears entire cache                              |
+| Method                  | Return Type                                     | Description                                                     |
+| ----------------------- | ----------------------------------------------- | --------------------------------------------------------------- |
+| `getByKey(key)`         | `T \| undefined \| Promise<...>`                | Get single item (sync if cached)                                |
+| `getByKeys(keys)`       | `T[] \| Promise<T[]>`                           | Get multiple items (sync if all cached)                         |
+| `getByKeysSparse(keys)` | `(T \| undefined)[] \| Promise<...>`            | Get multiple items preserving order                             |
+| `get(keyOrKeys)`        | mixed                                           | Shorthand for `getByKey` or `getByKeys`                         |
+| `refresh(keyOrKeys)`    | `Promise<T \| undefined \| (T \| undefined)[]>` | Fetches fresh value(s); missing keys are evicted from the cache |
+| `delete(keyOrKeys)`     | `void`                                          | Removes item(s) from cache                                      |
+| `clear()`               | `void`                                          | Clears entire cache                                             |
 
 ## Common Options
 
@@ -219,18 +265,24 @@ All three classes support these options:
 | `protection` | `'freeze' \| 'none'`           | `'none'` | Deep freeze returned objects           |
 | `cache`      | `boolean \| ProjectedMapCache` | `true`   | Enable/disable or provide custom cache |
 
+`ProjectedMap` additionally accepts:
+
+| Option | Type               | Default | Description                                                             |
+| ------ | ------------------ | ------- | ----------------------------------------------------------------------- |
+| `sort` | `(a, b) => number` | —       | Optional comparator applied on every materialization (full and partial) |
+
 ### Protection
 
 Enable `protection: 'freeze'` to prevent accidental mutations:
 
 ```ts
 const config = new ProjectedValue({
-  value: async () => ({ setting: 'value' }),
-  protection: 'freeze',
+  value: async () => ({ setting: "value" }),
+  protection: "freeze",
 });
 
 const result = await config.get();
-result.setting = 'new'; // throws TypeError in strict mode
+result.setting = "new"; // throws TypeError in strict mode
 ```
 
 ## Refresh Pattern
@@ -239,14 +291,14 @@ All classes implement `refresh()` for cache updates with error visibility:
 
 ```ts
 // triggers fetch and returns promise
-const freshValue = await users.refresh('user1');
+const freshValue = await users.refresh("user1");
 
 // or fire-and-forget with error handling
-users.refresh('user1').catch((err) => logger.error('refresh failed', err));
+users.refresh("user1").catch((err) => logger.error("refresh failed", err));
 
 // stale-while-revalidate: get cached value, then refresh in background
-const stale = users.getByKey('user1'); // sync if cached
-users.refresh('user1').catch(handleError); // background refresh
+const stale = users.getByKey("user1"); // sync if cached
+users.refresh("user1").catch(handleError); // background refresh
 ```
 
 Key behaviors:
@@ -254,6 +306,7 @@ Key behaviors:
 - Returns a Promise that resolves to the **fresh** value
 - On error: rejects the promise, but **keeps stale value in cache**
 - Multiple `refresh()` calls during a fetch share the same promise
+- For maps: a requested key that the fetch result omits is treated as missing and **evicted** from the cache. This is how you propagate upstream deletions.
 
 ## Guaranteed Sync Access Pattern
 
@@ -265,7 +318,7 @@ For server applications that prefetch data at startup, you can guarantee sync ac
 
 ```ts
 const map = new ProjectedMap<string, Category>({
-  protection: 'freeze',
+  protection: "freeze",
   key: (v) => v.id,
   values: () => fetchCategories(),
 });
@@ -284,7 +337,7 @@ export function getAllCategories(): Category[] {
   const result = map.getAll();
 
   if (result instanceof Promise) {
-    throw new Error('Categories not initialized');
+    throw new Error("Categories not initialized");
   }
 
   return result;
@@ -294,7 +347,7 @@ export function getCategory(id: string): Category | undefined {
   const result = map.getByKey(id);
 
   if (result instanceof Promise) {
-    throw new Error('Categories not initialized');
+    throw new Error("Categories not initialized");
   }
 
   return result;
@@ -310,11 +363,11 @@ Full type inference is supported:
 ```ts
 const map = new ProjectedMap({
   key: (item: { id: string }) => item.id,
-  values: async () => [{ id: '1', name: 'test' }],
+  values: async () => [{ id: "1", name: "test" }],
 });
 
 // result is { id: string; name: string } | undefined
-const result = await map.getByKey('1');
+const result = await map.getByKey("1");
 ```
 
 ## License

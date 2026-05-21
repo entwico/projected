@@ -11,11 +11,21 @@ export type ResolverOptions<K, V> = {
   key: (item: V) => K;
 
   /**
-   * Function that fetches multiple entities by keys
-   * @param keys Array of keys
-   * @returns Promise that resolves to an array of entities
+   * Fetches values for the given keys. Always invoked with a non-empty `keys` array — the
+   * dispatcher never calls this with an empty array.
+   *
+   * Return only the entities that exist. Any requested key that does not appear in the
+   * result is treated as missing — for `refresh()` callers, missing keys are evicted from
+   * the cache.
+   *
+   * A consumer who wants to share one fetcher between this and `ProjectedMap` can widen the
+   * parameter type to `K[] | undefined` (functions accepting a wider input are assignable
+   * here via parameter contravariance).
+   *
+   * @param keys Non-empty array of keys to fetch.
+   * @returns Array of entities (may be sync or a promise).
    */
-  values: (keys: K[]) => MaybePromise<Maybe<V>[]>;
+  values: (keys: K[]) => MaybePromise<V[]>;
 
   /**
    * Delay in ms that is used to buffer requests
@@ -38,7 +48,7 @@ type Consumer<K, V> = (values: ConsumerMap<K, Maybe<V>>) => void;
  * Utility class that helps to reduce the number of requests to the backend.
  */
 export class Resolver<K, V> {
-  private readonly values: (keys: K[]) => MaybePromise<Maybe<V>[]>;
+  private readonly values: (keys: K[]) => MaybePromise<V[]>;
   private readonly key: (item: V) => K;
   private readonly delay: number;
   private readonly maxChunkSize: number;
@@ -129,11 +139,9 @@ export class Resolver<K, V> {
       const values = await this.values(keys);
 
       values.forEach((value) => {
-        if (value) {
-          const key = this.key(value);
+        const key = this.key(value);
 
-          results.set(key, { value });
-        }
+        results.set(key, { value });
       });
     } catch (error) {
       results.forEach((_, key) => results.set(key, { error }));
