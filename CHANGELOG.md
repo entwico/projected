@@ -1,5 +1,18 @@
 ## [2.2.1](https://github.com/entwico/projected/compare/v2.2.0...v2.2.1) (2026-04-17)
 
+## 3.0.0
+
+### Major Changes
+
+- f973972: returned values are now typed `ReadonlyDeep<V>` (recursive readonly). The `protection: 'freeze' | 'none'` option and the `deepFreeze` utility are removed — runtime freezing is no longer applied. Use `structuredClone(value) as never as V` if you genuinely need a mutable copy.
+- 62a9b13: `ProjectedLazyMap.refresh()` now evicts cache entries for keys that are missing from the fetch result, instead of keeping the stale value
+- 62a9b13: `ProjectedMap.refresh(key | keys)` for partial refresh. Requested keys missing from the fetch result are deleted from the cached map.
+- 62a9b13: `values` callback signature changes. `ProjectedMap.values` is now called with `K[] | undefined` — `undefined` means return everything, an array means return only those entries. `ProjectedLazyMap` / `Resolver` `values` must now return `V[]` instead of `Maybe<V>[]` — keys absent from the result are treated as missing (previously `undefined` slots were silently skipped).
+
+### Minor Changes
+
+- 62a9b13: `ProjectedMap` gains a `sort` option (applied on every materialization — full refresh and partial merge) and a `delete(key | keys)` method for local-only removal
+
 ## 2.2.2
 
 ### Patch Changes
