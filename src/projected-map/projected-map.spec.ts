@@ -1052,10 +1052,10 @@ describe('kitchen sink', () => {
     expect(Object.isFrozen(item)).toBe(true);
   });
 
-  it('should let a refresh result override a concurrent local delete', async () => {
-    // partial returns '2' but local delete('2') was called while partial was in flight —
-    // partial's merge wins (refresh is the source of truth), which is the documented behavior.
-    let resolvePartial: ((v: TestObject[]) => void) | null = null;
+  it('should not resurrect a key when delete races with an in-flight partial refresh', async () => {
+    // delete during in-flight refresh tombstones the key — the partial result is dropped
+    // for that key, and a retry refresh is scheduled to confirm the post-delete state.
+    const inflight: InflightSlot[] = [];
 
     const map = new ProjectedMap<string, TestObject>({
       key: (item) => item.id,
@@ -1064,8 +1064,8 @@ describe('kitchen sink', () => {
           return testData;
         }
 
-        return new Promise<TestObject[]>((resolve) => {
-          resolvePartial = resolve;
+        return new Promise<TestObject[]>((resolve, reject) => {
+          inflight.push({ resolve, reject, keys });
         });
       },
     });
@@ -1074,19 +1074,217 @@ describe('kitchen sink', () => {
 
     const partial = map.refresh(['2']);
 
-    // wait for the partial fetch to be in flight
-    await vi.waitFor(() => expect(resolvePartial).not.toBeNull());
+    // wait for partial fetch to be in flight
+    await vi.waitFor(() => expect(inflight.length).toBe(1));
 
-    // local delete in the middle
+    // local delete while in flight — tombstones key '2'
     map.delete('2');
+    expect(map.getByKey('2')).toBeUndefined();
+
+    // first partial returns a (stale) '2' — it should NOT resurrect, retry is queued
+    inflight[0]!.resolve([{ id: '2', title: 'title2-stale' }]);
+    await partial;
+
+    // still gone — tombstone suppressed the resurrection
+    expect(map.getByKey('2')).toBeUndefined();
+
+    // retry is scheduled — wait for it to dispatch
+    await vi.waitFor(() => expect(inflight.length).toBe(2));
+    expect(inflight[1]!.keys).toEqual(['2']);
+
+    // the retry's fetch decides reality — server now agrees '2' is gone
+    inflight[1]!.resolve([]);
+
+    // give the merge a tick
+    await vi.waitFor(() => expect(map.getByKey('2')).toBeUndefined());
+  });
+});
+
+describe('tombstones', () => {
+  function controllable() {
+    const inflight: InflightSlot[] = [];
+
+    const values = (keys: string[] | undefined): Promise<TestObject[]> =>
+      new Promise<TestObject[]>((resolve, reject) => {
+        inflight.push({ resolve, reject, keys });
+      });
+
+    return { values, inflight };
+  }
+
+  it('should not tombstone delete calls made when nothing is in flight', async () => {
+    let version = 1;
+
+    const map = new ProjectedMap<string, TestObject>({
+      key: (item) => item.id,
+      values: (keys) => {
+        const items = keys === undefined ? testData : testData.filter((i) => keys.includes(i.id));
+
+        return items.map((item) => ({ ...item, title: `${item.title}-v${version}` }));
+      },
+    });
+
+    await map.refresh();
+
+    // no inflight — delete is a plain local removal
+    map.delete('2');
+    expect(map.getByKey('2')).toBeUndefined();
+
+    // subsequent refresh upserts '2' normally (no tombstone)
+    version = 2;
+    await map.refresh(['2']);
+
+    expect((map.getByKey('2') as TestObject).title).toBe('title2-v2');
+  });
+
+  it('should drop resurrection from a full refresh that races with a delete', async () => {
+    const { values, inflight } = controllable();
+
+    const map = new ProjectedMap<string, TestObject>({
+      key: (item) => item.id,
+      values,
+    });
+
+    // initial full
+    const initial = map.refresh();
+
+    await vi.waitFor(() => expect(inflight.length).toBe(1));
+    inflight[0]!.resolve(testData);
+    await initial;
+
+    // schedule a full refresh, then delete '3' while it's in flight
+    const full = map.refresh();
+
+    await vi.waitFor(() => expect(inflight.length).toBe(2));
+
+    map.delete('3');
+    expect(map.getByKey('3')).toBeUndefined();
+
+    // full returns everything (server snapshot still has '3')
+    inflight[1]!.resolve(testData);
+    await full;
+
+    // '3' must not be in the rebuilt map
+    expect(map.getByKey('3')).toBeUndefined();
+
+    // a retry partial for '3' is scheduled
+    await vi.waitFor(() => expect(inflight.length).toBe(3));
+    expect(inflight[2]!.keys).toEqual(['3']);
+
+    inflight[2]!.resolve([]);
+    await vi.waitFor(() => expect(map.getByKey('3')).toBeUndefined());
+  });
+
+  it('should let the retry upsert the key when no further delete arrives', async () => {
+    const { values, inflight } = controllable();
+
+    const map = new ProjectedMap<string, TestObject>({
+      key: (item) => item.id,
+      values,
+    });
+
+    // initial full
+    const initial = map.refresh();
+
+    await vi.waitFor(() => expect(inflight.length).toBe(1));
+    inflight[0]!.resolve(testData);
+    await initial;
+
+    const partial = map.refresh(['2']);
+
+    await vi.waitFor(() => expect(inflight.length).toBe(2));
+
+    map.delete('2');
+
+    // first partial returns '2' — tombstoned, suppressed
+    inflight[1]!.resolve([{ id: '2', title: 'title2-fresh' }]);
+    await partial;
 
     expect(map.getByKey('2')).toBeUndefined();
 
-    // partial completes with a fresh '2'
-    resolvePartial!([{ id: '2', title: 'title2-fresh' }]);
+    // retry dispatches; no new delete in the meantime — tombstone empty now
+    await vi.waitFor(() => expect(inflight.length).toBe(3));
+    expect(inflight[2]!.keys).toEqual(['2']);
+
+    // retry's fetch returns '2' — this time we accept it (tombstone was cleared)
+    inflight[2]!.resolve([{ id: '2', title: 'title2-final' }]);
+
+    await vi.waitFor(() => expect(map.getByKey('2')).toBeDefined());
+    expect((map.getByKey('2') as TestObject).title).toBe('title2-final');
+  });
+
+  it('should clear tombstones on refresh error', async () => {
+    const { values, inflight } = controllable();
+
+    const map = new ProjectedMap<string, TestObject>({
+      key: (item) => item.id,
+      values,
+    });
+
+    const initial = map.refresh();
+
+    await vi.waitFor(() => expect(inflight.length).toBe(1));
+    inflight[0]!.resolve(testData);
+    await initial;
+
+    const partial = map.refresh(['2']);
+
+    await vi.waitFor(() => expect(inflight.length).toBe(2));
+
+    map.delete('2');
+
+    // partial errors — tombstones must be cleared, no retry scheduled
+    inflight[1]!.reject(new Error('boom'));
+
+    await expect(partial).rejects.toThrow('boom');
+
+    // a subsequent refresh of '2' should treat it normally (no leftover tombstone)
+    const followup = map.refresh(['2']);
+
+    await vi.waitFor(() => expect(inflight.length).toBe(3));
+    inflight[2]!.resolve([{ id: '2', title: 'title2-back' }]);
+    await followup;
+
+    expect((map.getByKey('2') as TestObject).title).toBe('title2-back');
+  });
+
+  it('should not tombstone keys not touched during inflight', async () => {
+    // delete '4' while inflight for ['2'] — '4' is tombstoned, but the inflight doesn't
+    // include '4' so no resurrection check fires for it. The tombstone is cleared at the
+    // end of the refresh window anyway.
+    const { values, inflight } = controllable();
+
+    const map = new ProjectedMap<string, TestObject>({
+      key: (item) => item.id,
+      values,
+    });
+
+    const initial = map.refresh();
+
+    await vi.waitFor(() => expect(inflight.length).toBe(1));
+    inflight[0]!.resolve(testData);
+    await initial;
+
+    const partial = map.refresh(['2']);
+
+    await vi.waitFor(() => expect(inflight.length).toBe(2));
+
+    map.delete('4');
+    expect(map.getByKey('4')).toBeUndefined();
+
+    inflight[1]!.resolve(testData.filter((i) => i.id === '2'));
     await partial;
 
-    // partial result restored '2' (refresh is the source of truth)
-    expect((map.getByKey('2') as TestObject).title).toBe('title2-fresh');
+    // '4' stays gone, no resurrection
+    expect(map.getByKey('4')).toBeUndefined();
+
+    // a fresh partial for '4' after tombstones cleared should add it back
+    const followup = map.refresh(['4']);
+
+    await vi.waitFor(() => expect(inflight.length).toBe(3));
+    inflight[2]!.resolve(testData.filter((i) => i.id === '4'));
+    await followup;
+
+    expect((map.getByKey('4') as TestObject).id).toBe('4');
   });
 });

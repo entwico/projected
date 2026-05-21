@@ -87,6 +87,14 @@ export class ProjectedMap<K, V> {
   private _pendingPartial = new Set<K>();
   private _pendingDeferred: Deferred<Map<K, V>> | null = null;
   private _debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * keys deleted via `delete()` while a refresh was in flight.
+   * The in-flight fetch may resurrect them with stale data (snapshot reads); when its
+   * result lands, we skip any key in this set and schedule a one-shot retry refresh
+   * for them so the server can confirm the post-delete state.
+   * cleared at the end of every refresh (success or error).
+   */
+  private _tombstones = new Set<K>();
 
   constructor({ key, values, sort, protection, cache }: ProjectedMapOptions<K, V>) {
     this._key = key;
@@ -194,6 +202,12 @@ export class ProjectedMap<K, V> {
   /**
    * Delete entries locally. Does not trigger any fetch.
    * No-op when the map has not been resolved yet.
+   *
+   * When called during an in-flight refresh, the deleted keys are tombstoned: when the
+   * in-flight fetch returns, any tombstoned key it carries is dropped (treated as
+   * still-deleted) and a one-shot retry refresh is scheduled for those keys so the
+   * server can confirm the post-delete state.
+   *
    * @param keyOrKeys Single key or array of keys
    */
   delete(keyOrKeys: K | K[]): void {
@@ -205,6 +219,10 @@ export class ProjectedMap<K, V> {
 
     for (const key of keys) {
       this._state.map.delete(key);
+
+      if (this._inflight !== null) {
+        this._tombstones.add(key);
+      }
     }
   }
 
@@ -383,7 +401,7 @@ export class ProjectedMap<K, V> {
     const promise = Promise.resolve()
       // eslint-disable-next-line unicorn/no-useless-undefined
       .then(() => this._values(undefined))
-      .then((array) => this.arrayToMap(array));
+      .then((array) => this.buildFullMap(array));
 
     this._inflight = { type: 'full', promise: deferred.promise };
 
@@ -408,6 +426,9 @@ export class ProjectedMap<K, V> {
         if (this._state.status === 'pending') {
           this._state = { status: 'empty' };
         }
+
+        // tombstones for this refresh window are spent
+        this._tombstones.clear();
 
         this._inflight = null;
         this.drain();
@@ -442,6 +463,9 @@ export class ProjectedMap<K, V> {
         deferred.resolve(map);
       },
       (error) => {
+        // tombstones for this refresh window are spent
+        this._tombstones.clear();
+
         this._inflight = null;
         this.drain();
 
@@ -455,6 +479,8 @@ export class ProjectedMap<K, V> {
   private mergePartial(requestedKeys: K[], fetched: V[]): Map<K, V> {
     // defensive: state could have been cleared while partial was in flight
     if (this._state.status !== 'resolved') {
+      this._tombstones.clear();
+
       return new Map();
     }
 
@@ -465,8 +491,16 @@ export class ProjectedMap<K, V> {
     }
 
     const map = this._state.map;
+    const suspicious: K[] = [];
 
     for (const key of requestedKeys) {
+      if (this._tombstones.has(key)) {
+        // deleted while this refresh was in flight — don't resurrect, retry to confirm
+        map.delete(key);
+        suspicious.push(key);
+        continue;
+      }
+
       const value = fetchedByKey.get(key);
 
       if (value === undefined) {
@@ -474,6 +508,14 @@ export class ProjectedMap<K, V> {
       } else {
         map.set(key, this._protection === 'freeze' ? deepFreeze(value) : value);
       }
+    }
+
+    // tombstones for this refresh window are spent
+    this._tombstones.clear();
+
+    // queue one-shot retry for tombstoned-but-resurrected keys; drain picks them up
+    for (const key of suspicious) {
+      this._pendingPartial.add(key);
     }
 
     const finalMap = this.applySort(map);
@@ -485,13 +527,32 @@ export class ProjectedMap<K, V> {
     return finalMap;
   }
 
-  private arrayToMap(array: V[]): Map<K, V> {
+  private buildFullMap(array: V[]): Map<K, V> {
     const sorted = this._sort ? array.toSorted(this._sort) : array;
+    const map = new Map<K, V>();
+    const suspicious: K[] = [];
 
-    return sorted.reduce(
-      (map, item) => map.set(this._key(item), this._protection === 'freeze' ? deepFreeze(item) : item),
-      new Map<K, V>(),
-    );
+    for (const item of sorted) {
+      const key = this._key(item);
+
+      if (this._tombstones.has(key)) {
+        // deleted while this refresh was in flight — don't include, retry to confirm
+        suspicious.push(key);
+        continue;
+      }
+
+      map.set(key, this._protection === 'freeze' ? deepFreeze(item) : item);
+    }
+
+    // tombstones for this refresh window are spent
+    this._tombstones.clear();
+
+    // queue one-shot partial retry for suspicious keys
+    for (const key of suspicious) {
+      this._pendingPartial.add(key);
+    }
+
+    return map;
   }
 
   private applySort(map: Map<K, V>): Map<K, V> {
