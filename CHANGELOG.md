@@ -1,5 +1,11 @@
 ## [2.2.1](https://github.com/entwico/projected/compare/v2.2.0...v2.2.1) (2026-04-17)
 
+## 3.0.1
+
+### Patch Changes
+
+- 1b37f9b: partial-refresh keys requested while a full refresh is in flight are now queued and dispatched as a follow-up fetch after the full completes
+
 ## 3.0.0
 
 ### Major Changes
