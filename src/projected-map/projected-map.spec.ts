@@ -778,11 +778,11 @@ describe('drain (concurrent refresh)', () => {
     expect(m2.size).toBe(5);
   });
 
-  it('should run partial after full completes when full is in flight first', async () => {
+  it('should run partial after full completes when partial is requested mid-full (resolved cache)', async () => {
     let resolveFull: ((v: TestObject[]) => void) | null = null;
     const fetches: ('full' | string[])[] = [];
 
-    let inflightPartial: ((v: TestObject[]) => void) | null = null;
+    let resolvePartial: ((v: TestObject[]) => void) | null = null;
 
     const map = new ProjectedMap<string, TestObject>({
       key: (item) => item.id,
@@ -798,7 +798,7 @@ describe('drain (concurrent refresh)', () => {
         fetches.push([...keys]);
 
         return new Promise<TestObject[]>((resolve) => {
-          inflightPartial = (v) => resolve(v);
+          resolvePartial = (v) => resolve(v);
         });
       },
     });
@@ -810,22 +810,87 @@ describe('drain (concurrent refresh)', () => {
     resolveFull!(testData);
     await initial;
 
-    // start a full, then a partial — partial is subsumed
+    // start a full, then a partial mid-full — the full's snapshot may not include
+    // the update that triggered the partial, so the partial must NOT be subsumed
     resolveFull = null;
 
     const full = map.refresh();
     const partial = map.refresh(['1']);
 
-    expect(full).toBe(partial);
+    // distinct promises — the partial resolves only after its own follow-up fetch
+    expect(full).not.toBe(partial);
 
     await vi.waitFor(() => expect(resolveFull).not.toBeNull());
     resolveFull!(testData);
     await full;
 
-    // partial was dropped because it was subsumed by full
-    expect(fetches.filter((f) => Array.isArray(f))).toHaveLength(0);
-    // inflightPartial was never assigned because the partial fetch was never started
-    expect(inflightPartial).toBeNull();
+    // full completed — drain must dispatch the queued partial as a follow-up fetch
+    await vi.waitFor(() => expect(resolvePartial).not.toBeNull());
+    expect(fetches).toEqual(['full', 'full', ['1']]);
+
+    resolvePartial!([{ id: '1', title: 'title1-fresh' }]);
+
+    const result = await partial;
+
+    expect(result.get('1')).toEqual({ id: '1', title: 'title1-fresh' });
+  });
+
+  it('should coalesce multiple partials requested mid-full into one follow-up fetch', async () => {
+    let resolveFull: ((v: TestObject[]) => void) | null = null;
+    const fetches: ('full' | string[])[] = [];
+    let resolvePartial: ((v: TestObject[]) => void) | null = null;
+
+    const map = new ProjectedMap<string, TestObject>({
+      key: (item) => item.id,
+      values: (keys) => {
+        if (keys === undefined) {
+          fetches.push('full');
+
+          return new Promise<TestObject[]>((resolve) => {
+            resolveFull = resolve;
+          });
+        }
+
+        fetches.push([...keys]);
+
+        return new Promise<TestObject[]>((resolve) => {
+          resolvePartial = (v) => resolve(v);
+        });
+      },
+    });
+
+    const initial = map.refresh();
+
+    await vi.waitFor(() => expect(resolveFull).not.toBeNull());
+    resolveFull!(testData);
+    await initial;
+
+    // start a full and three partials covering overlapping keys
+    resolveFull = null;
+
+    const full = map.refresh();
+    const p1 = map.refresh(['1']);
+    const p2 = map.refresh(['2', '1']);
+    const p3 = map.refresh(['3']);
+
+    // the three partials share a single deferred — they coalesce
+    expect(p1).toBe(p2);
+    expect(p2).toBe(p3);
+    expect(p1).not.toBe(full);
+
+    await vi.waitFor(() => expect(resolveFull).not.toBeNull());
+    resolveFull!(testData);
+    await full;
+
+    await vi.waitFor(() => expect(resolvePartial).not.toBeNull());
+
+    // one follow-up partial fetch covering the union of requested keys
+    expect(fetches.filter((f) => Array.isArray(f))).toHaveLength(1);
+    expect(new Set(fetches[2] as string[])).toEqual(new Set(['1', '2', '3']));
+
+    resolvePartial!(testData.filter((i) => ['1', '2', '3'].includes(i.id)));
+
+    await p1;
   });
 
   it('should queue keys for a follow-up fetch when partial is inflight', async () => {
