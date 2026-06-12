@@ -93,7 +93,7 @@ export class ProjectedMap<K, V> {
   }
 
   /** Returns one slot per requested key; missing keys become `undefined`. */
-  getByKeysSparse(keys: K[]): MaybePromise<ReadonlyArray<Maybe<ReadonlyDeep<V>>>> {
+  getByKeysSparse(keys: readonly K[]): MaybePromise<ReadonlyArray<Maybe<ReadonlyDeep<V>>>> {
     if (keys.length === 0) {
       return [];
     }
@@ -107,7 +107,7 @@ export class ProjectedMap<K, V> {
     return keys.map((id) => cache.get(id));
   }
 
-  getByKeys(keys: K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
+  getByKeys(keys: readonly K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
     const sparse = this.getByKeysSparse(keys);
 
     if (sparse instanceof Promise) {
@@ -127,14 +127,14 @@ export class ProjectedMap<K, V> {
     return cache.get(key);
   }
 
-  get(keyOrKeys: K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>>;
+  get(keyOrKeys: readonly K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>>;
   get(keyOrKeys: K): MaybePromise<Maybe<ReadonlyDeep<V>>>;
-  get(keyOrKeys: K | K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>> | Maybe<ReadonlyDeep<V>>> {
+  get(keyOrKeys: K | readonly K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>> | Maybe<ReadonlyDeep<V>>> {
     if (Array.isArray(keyOrKeys)) {
-      return this.getByKeys(keyOrKeys);
+      return this.getByKeys(keyOrKeys as readonly K[]);
     }
 
-    return this.getByKey(keyOrKeys);
+    return this.getByKey(keyOrKeys as K);
   }
 
   /**

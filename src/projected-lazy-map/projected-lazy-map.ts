@@ -45,7 +45,7 @@ export class ProjectedLazyMap<K, V> {
    * @param keys Array of keys
    * @returns Array of values (sync if all cached) or Promise that resolves to an array
    */
-  getByKeysSparse(keys: K[]): MaybePromise<ReadonlyArray<Maybe<ReadonlyDeep<V>>>> {
+  getByKeysSparse(keys: readonly K[]): MaybePromise<ReadonlyArray<Maybe<ReadonlyDeep<V>>>> {
     if (keys.length === 0) {
       return [];
     }
@@ -88,7 +88,7 @@ export class ProjectedLazyMap<K, V> {
    * @param keys Array of keys
    * @returns Array of values (sync if all cached) or Promise that resolves to an array
    */
-  getByKeys(keys: K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
+  getByKeys(keys: readonly K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
     const sparse = this.getByKeysSparse(keys);
 
     if (sparse instanceof Promise) {
@@ -121,7 +121,7 @@ export class ProjectedLazyMap<K, V> {
     });
   }
 
-  get(keyOrKeys: K[], options?: GetOptions): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>>;
+  get(keyOrKeys: readonly K[], options?: GetOptions): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>>;
   get(keyOrKeys: K, options?: GetOptions): MaybePromise<Maybe<ReadonlyDeep<V>>>;
 
   /**
@@ -130,13 +130,13 @@ export class ProjectedLazyMap<K, V> {
    * @returns Value or array of values (sync if cached) or Promise
    */
   get(
-    keyOrKeys: K | K[],
+    keyOrKeys: K | readonly K[],
   ): MaybePromise<ReadonlyArray<ReadonlyDeep<V>> | Maybe<ReadonlyDeep<V>>> {
     if (Array.isArray(keyOrKeys)) {
-      return this.getByKeys(keyOrKeys);
+      return this.getByKeys(keyOrKeys as readonly K[]);
     }
 
-    return this.getByKey(keyOrKeys);
+    return this.getByKey(keyOrKeys as K);
   }
 
   /**
