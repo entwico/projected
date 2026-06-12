@@ -1,5 +1,11 @@
 ## [2.2.1](https://github.com/entwico/projected/compare/v2.2.0...v2.2.1) (2026-04-17)
 
+## 3.0.2
+
+### Patch Changes
+
+- e3356ee: accept readonly key arrays in `get()` on ProjectedMap and ProjectedLazyMap
+
 ## 3.0.1
 
 ### Patch Changes
