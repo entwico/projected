@@ -1,8 +1,7 @@
-import type { MaybePromise } from '../types/maybe-promise.js';
+import { type MaybePromise, type ReadonlyDeep, defined } from '@entwico/dash';
+
 import type { Maybe } from '../types/maybe.js';
-import type { ReadonlyDeep } from '../types/readonly-deep.js';
 import { Deferred } from '../utils/deferred.js';
-import { defined } from '../utils/defined.js';
 
 type CacheState<K, V> =
   | { status: 'empty' }

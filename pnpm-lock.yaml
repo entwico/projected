@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@entwico/dash':
+        specifier: ^1.0.0
+        version: 1.0.0
     devDependencies:
       '@changesets/cli':
         specifier: ^2.31.0
@@ -188,6 +192,20 @@ packages:
 
   '@emnapi/wasi-threads@1.2.1':
     resolution: {integrity: sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==}
+
+  '@entwico/dash@1.0.0':
+    resolution: {integrity: sha512-g8CYcx1i62yA3/GlTAsTkD0rWPOIl6FhNxHzVSfpGDE+Fihlm8wm0XTat87BChADNvgs7OwoM/tAljgClKcMsA==}
+    peerDependencies:
+      clsx: '>=2'
+      react: '>=18'
+      tailwind-merge: '>=2'
+    peerDependenciesMeta:
+      clsx:
+        optional: true
+      react:
+        optional: true
+      tailwind-merge:
+        optional: true
 
   '@entwico/eslint-config@1.5.0':
     resolution: {integrity: sha512-pAbMRYrCZHMqvSZLX1dlxi2PU1i7QJnYQ17hrT8+uPSzKwiqykQVzNJxRMGqAltIYd62HXjUs+eD//y9w9f4RQ==}
@@ -2693,6 +2711,8 @@ snapshots:
     dependencies:
       tslib: 2.8.1
     optional: true
+
+  '@entwico/dash@1.0.0': {}
 
   '@entwico/eslint-config@1.5.0(@typescript-eslint/utils@8.59.4(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(astro-eslint-parser@1.4.0)(eslint@9.39.4(jiti@2.7.0))(tailwindcss@4.3.0)(typescript@5.9.3)':
     dependencies:

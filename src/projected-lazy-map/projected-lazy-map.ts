@@ -1,8 +1,7 @@
+import { type MaybePromise, type ReadonlyDeep, defined } from '@entwico/dash';
+
 import type { ProjectedMapCache } from '../types/cache.js';
-import type { MaybePromise } from '../types/maybe-promise.js';
 import type { Maybe } from '../types/maybe.js';
-import type { ReadonlyDeep } from '../types/readonly-deep.js';
-import { defined } from '../utils/defined.js';
 import { NOOP_CACHE } from '../utils/noop-cache.js';
 
 import { Resolver, type ResolverOptions } from './dispatcher.js';

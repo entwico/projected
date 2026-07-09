@@ -17,7 +17,7 @@ This library provides three utilities that solve these problems with a clean, ty
 ## Installation
 
 ```bash
-npm i projected
+npm i @entwico/projected
 ```
 
 ## Features
@@ -42,7 +42,7 @@ npm i projected
 Caches a single value fetched from a remote source.
 
 ```ts
-import { ProjectedValue } from "projected";
+import { ProjectedValue } from "@entwico/projected";
 
 const config = new ProjectedValue({
   value: async () => {
@@ -94,7 +94,7 @@ if (result instanceof Promise) {
 Caches an entire collection, fetched all at once. Unlike `ProjectedValue`, it allows accessing individual items by key. Unlike `ProjectedLazyMap`, it provides access to all items at once. Best for small, frequently-accessed collections where you need both.
 
 ```ts
-import { ProjectedMap } from "projected";
+import { ProjectedMap } from "@entwico/projected";
 
 type Country = { code: string; name: string };
 
@@ -184,7 +184,7 @@ await countries.delete(["DE", "FR"]);
 Fetches items on-demand with automatic request batching. Best for large collections where you only need specific items.
 
 ```ts
-import { ProjectedLazyMap } from "projected";
+import { ProjectedLazyMap } from "@entwico/projected";
 
 type User = { id: string; name: string };
 

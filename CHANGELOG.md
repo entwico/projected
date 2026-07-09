@@ -1,5 +1,11 @@
 ## [2.2.1](https://github.com/entwico/projected/compare/v2.2.0...v2.2.1) (2026-04-17)
 
+## 4.0.0
+
+### Major Changes
+
+- renamed to @entwico/projected; MaybePromise, ReadonlyDeep, maybeThen, maybeCatch and Maybe are no longer exported — import them from @entwico/dash
+
 ## 3.0.2
 
 ### Patch Changes

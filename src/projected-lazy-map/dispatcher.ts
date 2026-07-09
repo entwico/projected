@@ -1,4 +1,5 @@
-import type { MaybePromise } from '../types/maybe-promise.js';
+import type { MaybePromise } from '@entwico/dash';
+
 import type { Maybe } from '../types/maybe.js';
 import { Deferred } from '../utils/deferred.js';
 
