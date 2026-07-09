@@ -1,5 +1,11 @@
 ## [2.2.1](https://github.com/entwico/projected/compare/v2.2.0...v2.2.1) (2026-04-17)
 
+## 4.0.1
+
+### Patch Changes
+
+- d784136: modernized internals to ES2025 (`Promise.try`, iterator helpers) — requires Node 23+ or an equivalent modern runtime
+
 ## 4.0.0
 
 ### Major Changes
