@@ -37,6 +37,43 @@ export class ProjectedValue<V> {
     this.shouldCache = cache ?? true;
   }
 
+  private fetch(): Promise<ReadonlyDeep<V>> {
+    const promise = this.fetchValue();
+
+    this._state = { status: 'pending', promise };
+
+    return promise;
+  }
+
+  private triggerBackgroundRefresh(staleValue?: ReadonlyDeep<V>): Promise<ReadonlyDeep<V>> {
+    const promise = this.fetchValue(staleValue);
+
+    this._state = staleValue === undefined
+      ? { status: 'pending', promise }
+      : { status: 'refreshing', value: staleValue, promise };
+
+    return promise;
+  }
+
+  private async fetchValue(staleValue?: ReadonlyDeep<V>): Promise<ReadonlyDeep<V>> {
+    try {
+      // Promise.try converts a synchronous throw into a rejection, so the catch below
+      // runs only after the caller has assigned the pending/refreshing state
+      const value = (await Promise.try(() => this.valueFn())) as ReadonlyDeep<V>;
+
+      this._state = this.shouldCache ? { status: 'resolved', value } : { status: 'empty' };
+
+      return value;
+    } catch (error) {
+      // on error, keep stale value if we have one
+      this._state = staleValue !== undefined && this.shouldCache
+        ? { status: 'resolved', value: staleValue }
+        : { status: 'empty' };
+
+      throw error;
+    }
+  }
+
   /**
    * Get the value
    * @returns Value (sync if cached) or Promise that resolves to a value (async if fetching)
@@ -88,53 +125,6 @@ export class ProjectedValue<V> {
 
     // have cached value - trigger refresh
     return this.triggerBackgroundRefresh(state.value);
-  }
-
-  private fetch(): Promise<ReadonlyDeep<V>> {
-    const promise = Promise.resolve()
-      .then(() => this.valueFn())
-      .then((v) => {
-        const value = v as ReadonlyDeep<V>;
-
-        this._state = this.shouldCache ? { status: 'resolved', value } : { status: 'empty' };
-
-        return value;
-      })
-      .catch((error) => {
-        this._state = { status: 'empty' };
-
-        throw error;
-      });
-
-    this._state = { status: 'pending', promise };
-
-    return promise;
-  }
-
-  private triggerBackgroundRefresh(staleValue?: ReadonlyDeep<V>): Promise<ReadonlyDeep<V>> {
-    const promise = Promise.resolve()
-      .then(() => this.valueFn())
-      .then((v) => {
-        const value = v as ReadonlyDeep<V>;
-
-        this._state = this.shouldCache ? { status: 'resolved', value } : { status: 'empty' };
-
-        return value;
-      })
-      .catch((error) => {
-        // on error, keep stale value if we have one
-        this._state = staleValue !== undefined && this.shouldCache
-          ? { status: 'resolved', value: staleValue }
-          : { status: 'empty' };
-
-        throw error;
-      });
-
-    this._state = staleValue === undefined
-      ? { status: 'pending', promise }
-      : { status: 'refreshing', value: staleValue, promise };
-
-    return promise;
   }
 }
 

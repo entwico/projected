@@ -1,4 +1,4 @@
-import { type MaybePromise, type ReadonlyDeep, defined } from '@entwico/dash';
+import { type MaybePromise, type ReadonlyDeep, defined, maybeThen } from '@entwico/dash';
 
 import type { ProjectedMapCache } from '../types/cache.js';
 import type { Maybe } from '../types/maybe.js';
@@ -39,6 +39,36 @@ export class ProjectedLazyMap<K, V> {
     }
   }
 
+  private async fetchMissing(
+    keys: readonly K[],
+    missingKeys: K[],
+    foundMap: Map<K, V>,
+  ): Promise<ReadonlyArray<Maybe<ReadonlyDeep<V>>>> {
+    const fetchedMap = await this.fetcher.resolve(missingKeys);
+
+    fetchedMap.forEach((value, valueKey) => {
+      if (!value) {
+        return;
+      }
+
+      foundMap.set(valueKey, value);
+      this.cache.set(valueKey, value);
+    });
+
+    return keys.map((key) => foundMap.get(key) as ReadonlyDeep<V> | undefined);
+  }
+
+  private async fetchByKey(key: K): Promise<Maybe<ReadonlyDeep<V>>> {
+    const fetchedMap = await this.fetcher.resolve([key]);
+    const value = fetchedMap.get(key);
+
+    if (value) {
+      this.cache.set(key, value);
+    }
+
+    return value as ReadonlyDeep<V> | undefined;
+  }
+
   /**
    * Get values by keys, but return `undefined` for missing keys
    * @param keys Array of keys
@@ -67,19 +97,7 @@ export class ProjectedLazyMap<K, V> {
       return keys.map((key) => foundMap.get(key) as ReadonlyDeep<V> | undefined);
     }
 
-    // need to fetch missing keys
-    return this.fetcher.resolve(missingKeys).then((fetchedMap) => {
-      fetchedMap.forEach((value, valueKey) => {
-        if (!value) {
-          return;
-        }
-
-        foundMap.set(valueKey, value);
-        this.cache.set(valueKey, value);
-      });
-
-      return keys.map((key) => foundMap.get(key) as ReadonlyDeep<V> | undefined);
-    });
+    return this.fetchMissing(keys, missingKeys, foundMap);
   }
 
   /**
@@ -88,13 +106,7 @@ export class ProjectedLazyMap<K, V> {
    * @returns Array of values (sync if all cached) or Promise that resolves to an array
    */
   getByKeys(keys: readonly K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
-    const sparse = this.getByKeysSparse(keys);
-
-    if (sparse instanceof Promise) {
-      return sparse.then((values) => values.filter(defined));
-    }
-
-    return sparse.filter(defined);
+    return maybeThen(this.getByKeysSparse(keys), (values) => values.filter(defined));
   }
 
   /**
@@ -109,15 +121,7 @@ export class ProjectedLazyMap<K, V> {
       return hit as ReadonlyDeep<V>;
     }
 
-    return this.fetcher.resolve([key]).then((fetchedMap) => {
-      const value = fetchedMap.get(key);
-
-      if (value) {
-        this.cache.set(key, value);
-      }
-
-      return value as ReadonlyDeep<V> | undefined;
-    });
+    return this.fetchByKey(key);
   }
 
   get(keyOrKeys: readonly K[], options?: GetOptions): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>>;

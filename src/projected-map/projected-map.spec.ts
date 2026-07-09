@@ -511,7 +511,7 @@ describe('sort', () => {
 
     const fresh = await map.refresh();
 
-    expect([...fresh.values()].map((i) => i.id)).toEqual(['1', '2', '3', '4', '5']);
+    expect(fresh.values().map((i) => i.id).toArray()).toEqual(['1', '2', '3', '4', '5']);
   });
 
   it('should apply sort on partial refresh that adds a new entry', async () => {
@@ -752,9 +752,11 @@ describe('drain (concurrent refresh)', () => {
       key: (item) => item.id,
       values: (keys) => {
         if (keys === undefined) {
-          return new Promise<TestObject[]>((resolve) => {
-            resolveFull = resolve;
-          });
+          const { promise, resolve } = Promise.withResolvers<TestObject[]>();
+
+          resolveFull = resolve;
+
+          return promise;
         }
 
         return testData.filter((i) => keys.includes(i.id));
@@ -790,16 +792,20 @@ describe('drain (concurrent refresh)', () => {
         if (keys === undefined) {
           fetches.push('full');
 
-          return new Promise<TestObject[]>((resolve) => {
-            resolveFull = resolve;
-          });
+          const { promise, resolve } = Promise.withResolvers<TestObject[]>();
+
+          resolveFull = resolve;
+
+          return promise;
         }
 
         fetches.push([...keys]);
 
-        return new Promise<TestObject[]>((resolve) => {
-          resolvePartial = (v) => resolve(v);
-        });
+        const { promise, resolve } = Promise.withResolvers<TestObject[]>();
+
+        resolvePartial = resolve;
+
+        return promise;
       },
     });
 
@@ -846,16 +852,20 @@ describe('drain (concurrent refresh)', () => {
         if (keys === undefined) {
           fetches.push('full');
 
-          return new Promise<TestObject[]>((resolve) => {
-            resolveFull = resolve;
-          });
+          const { promise, resolve } = Promise.withResolvers<TestObject[]>();
+
+          resolveFull = resolve;
+
+          return promise;
         }
 
         fetches.push([...keys]);
 
-        return new Promise<TestObject[]>((resolve) => {
-          resolvePartial = (v) => resolve(v);
-        });
+        const { promise, resolve } = Promise.withResolvers<TestObject[]>();
+
+        resolvePartial = resolve;
+
+        return promise;
       },
     });
 
@@ -997,9 +1007,11 @@ describe('drain (concurrent refresh)', () => {
           return testData;
         }
 
-        return new Promise<TestObject[]>((resolve) => {
-          resolvePartial = resolve;
-        });
+        const { promise, resolve } = Promise.withResolvers<TestObject[]>();
+
+        resolvePartial = resolve;
+
+        return promise;
       },
     });
 

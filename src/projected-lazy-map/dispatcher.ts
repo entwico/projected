@@ -69,37 +69,6 @@ export class Resolver<K, V> {
     this.maxChunkSize = maxChunkSize ?? 1000;
   }
 
-  async resolve(keys: K[]): Promise<Map<K, Maybe<V>>> {
-    const deferred = new Deferred<Map<K, Maybe<V>>>();
-
-    const pending = new Set(keys);
-    const resolved = new Map<K, Maybe<V>>();
-
-    const consume: Consumer<K, V> = (results) => {
-      results.forEach((value, key) => {
-        if ('error' in value) {
-          this.consumers.delete(consume);
-          deferred.reject(value.error);
-          return;
-        }
-
-        resolved.set(key, value.value);
-        pending.delete(key);
-      });
-
-      if (pending.size === 0) {
-        this.consumers.delete(consume);
-        deferred.resolve(resolved);
-      }
-    };
-
-    this.consumers.add(consume);
-    this.enqueue(keys);
-    this.schedule();
-
-    return deferred.promise;
-  }
-
   private enqueue(keys: K[]) {
     // if present, the key will remain on the same position in the queue even if it is added multiple times
     keys.forEach((key) => this.queue.add(key));
@@ -152,9 +121,42 @@ export class Resolver<K, V> {
   }
 
   private clearTimer() {
-    if (this.timeout) {
-      clearTimeout(this.timeout);
-      this.timeout = null;
+    if (!this.timeout) {
+      return;
     }
+
+    clearTimeout(this.timeout);
+    this.timeout = null;
+  }
+
+  async resolve(keys: K[]): Promise<Map<K, Maybe<V>>> {
+    const deferred = new Deferred<Map<K, Maybe<V>>>();
+
+    const pending = new Set(keys);
+    const resolved = new Map<K, Maybe<V>>();
+
+    const consume: Consumer<K, V> = (results) => {
+      results.forEach((value, key) => {
+        if ('error' in value) {
+          this.consumers.delete(consume);
+          deferred.reject(value.error);
+          return;
+        }
+
+        resolved.set(key, value.value);
+        pending.delete(key);
+      });
+
+      if (pending.size === 0) {
+        this.consumers.delete(consume);
+        deferred.resolve(resolved);
+      }
+    };
+
+    this.consumers.add(consume);
+    this.enqueue(keys);
+    this.schedule();
+
+    return deferred.promise;
   }
 }

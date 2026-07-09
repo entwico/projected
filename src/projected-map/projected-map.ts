@@ -1,4 +1,4 @@
-import { type MaybePromise, type ReadonlyDeep, defined } from '@entwico/dash';
+import { type MaybePromise, type ReadonlyDeep, defined, maybeThen } from '@entwico/dash';
 
 import type { Maybe } from '../types/maybe.js';
 import { Deferred } from '../utils/deferred.js';
@@ -65,134 +65,6 @@ export class ProjectedMap<K, V> {
     this._values = values;
     this._sort = sort;
     this._shouldCache = cache ?? true;
-  }
-
-  getAllAsMap(): MaybePromise<ResolvedMap<K, V>> {
-    const cache = this.getCache();
-
-    if (cache instanceof Promise) {
-      return cache.then((map) => new Map(map));
-    }
-
-    return new Map(cache) as ResolvedMap<K, V>;
-  }
-
-  /**
-   * Iteration order follows `sort` when configured, otherwise the order from the last full
-   * `values()` call with partial-refresh additions appended.
-   */
-  getAll(): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
-    const cache = this.getCache();
-
-    if (cache instanceof Promise) {
-      return cache.then((map) => [...map.values()]);
-    }
-
-    return [...cache.values()];
-  }
-
-  /** Returns one slot per requested key; missing keys become `undefined`. */
-  getByKeysSparse(keys: readonly K[]): MaybePromise<ReadonlyArray<Maybe<ReadonlyDeep<V>>>> {
-    if (keys.length === 0) {
-      return [];
-    }
-
-    const cache = this.getCache();
-
-    if (cache instanceof Promise) {
-      return cache.then((map) => keys.map((id) => map.get(id)));
-    }
-
-    return keys.map((id) => cache.get(id));
-  }
-
-  getByKeys(keys: readonly K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
-    const sparse = this.getByKeysSparse(keys);
-
-    if (sparse instanceof Promise) {
-      return sparse.then((values) => values.filter(defined));
-    }
-
-    return sparse.filter(defined);
-  }
-
-  getByKey(key: K): MaybePromise<Maybe<ReadonlyDeep<V>>> {
-    const cache = this.getCache();
-
-    if (cache instanceof Promise) {
-      return cache.then((map) => map.get(key));
-    }
-
-    return cache.get(key);
-  }
-
-  get(keyOrKeys: readonly K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>>;
-  get(keyOrKeys: K): MaybePromise<Maybe<ReadonlyDeep<V>>>;
-  get(keyOrKeys: K | readonly K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>> | Maybe<ReadonlyDeep<V>>> {
-    if (Array.isArray(keyOrKeys)) {
-      return this.getByKeys(keyOrKeys as readonly K[]);
-    }
-
-    return this.getByKey(keyOrKeys as K);
-  }
-
-  /**
-   * Deletes entries locally without fetching. No-op when not yet resolved. If a refresh
-   * is in flight, the keys are tombstoned: the in-flight result drops them and a one-shot
-   * retry confirms the post-delete state.
-   */
-  delete(keyOrKeys: K | K[]): void {
-    if (this._state.status !== 'resolved') {
-      return;
-    }
-
-    const keys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
-
-    for (const key of keys) {
-      this._state.map.delete(key);
-
-      if (this._inflight !== null) {
-        this._tombstones.add(key);
-      }
-    }
-  }
-
-  /** Clears cached values so the next access refetches. */
-  clear() {
-    this._state = { status: 'empty' };
-  }
-
-  refresh(): Promise<ResolvedMap<K, V>>;
-  refresh(keyOrKeys: K | K[]): Promise<ResolvedMap<K, V>>;
-
-  /**
-   * Stale-while-revalidate refresh.
-   *
-   * - `refresh()` (or `refresh([])`) does a full re-fetch via `values(undefined)`.
-   * - `refresh(key | keys)` does a partial re-fetch; requested keys missing from the result
-   *   are deleted. Falls back to full when no resolved map exists yet.
-   *
-   * Concurrent calls coalesce: rapid partials within a debounce window merge into one fetch;
-   * a full/partial requested while another is in flight is queued. A queued full subsumes
-   * queued partial keys. Partial keys arriving during an in-flight full are not subsumed —
-   * they run as a follow-up partial, since the full's snapshot may pre-date the change.
-   *
-   * On error, the stale map is preserved and the returned promise rejects.
-   */
-  refresh(keyOrKeys?: K | K[]): Promise<ResolvedMap<K, V>> {
-    if (keyOrKeys === undefined) {
-      return this.scheduleFull();
-    }
-
-    if (Array.isArray(keyOrKeys)) {
-      if (keyOrKeys.length === 0) {
-        return this.scheduleFull();
-      }
-
-      return this.schedulePartial(keyOrKeys);
-    }
-
-    return this.schedulePartial([keyOrKeys]);
   }
 
   private getCache(): MaybePromise<ResolvedMap<K, V>> {
@@ -272,10 +144,12 @@ export class ProjectedMap<K, V> {
   }
 
   private clearDebounce(): void {
-    if (this._debounceTimer !== null) {
-      clearTimeout(this._debounceTimer);
-      this._debounceTimer = null;
+    if (this._debounceTimer === null) {
+      return;
     }
+
+    clearTimeout(this._debounceTimer);
+    this._debounceTimer = null;
   }
 
   private drain(): void {
@@ -308,12 +182,6 @@ export class ProjectedMap<K, V> {
     const deferred = this._pendingDeferred ?? new Deferred<ResolvedMap<K, V>>();
 
     this._pendingDeferred = null;
-
-    const promise = Promise.resolve()
-      // eslint-disable-next-line unicorn/no-useless-undefined
-      .then(() => this._values(undefined))
-      .then((array) => this.buildFullMap(array));
-
     this._inflight = { type: 'full', promise: deferred.promise };
 
     // transition to pending so concurrent gets join this fetch
@@ -321,32 +189,36 @@ export class ProjectedMap<K, V> {
       this._state = { status: 'pending', promise: deferred.promise };
     }
 
-    promise.then(
-      (map) => {
-        this._state = this._shouldCache ? { status: 'resolved', map } : { status: 'empty' };
-
-        // clear inflight + drain before resolving so awaiters observe the post-op state
-        this._inflight = null;
-        this.drain();
-
-        deferred.resolve(map as unknown as ResolvedMap<K, V>);
-      },
-      (error) => {
-        // keep stale on error; reset to empty if nothing was resolved yet
-        if (this._state.status === 'pending') {
-          this._state = { status: 'empty' };
-        }
-
-        this._tombstones.clear();
-
-        this._inflight = null;
-        this.drain();
-
-        deferred.reject(error);
-      },
-    );
+    void this.runFull(deferred);
 
     return deferred.promise;
+  }
+
+  private async runFull(deferred: Deferred<ResolvedMap<K, V>>): Promise<void> {
+    try {
+      const array = await Promise.try(() => this._values(undefined));
+      const map = this.buildFullMap(array);
+
+      this._state = this._shouldCache ? { status: 'resolved', map } : { status: 'empty' };
+
+      // clear inflight + drain before resolving so awaiters observe the post-op state
+      this._inflight = null;
+      this.drain();
+
+      deferred.resolve(map as unknown as ResolvedMap<K, V>);
+    } catch (error) {
+      // keep stale on error; reset to empty if nothing was resolved yet
+      if (this._state.status === 'pending') {
+        this._state = { status: 'empty' };
+      }
+
+      this._tombstones.clear();
+
+      this._inflight = null;
+      this.drain();
+
+      deferred.reject(error);
+    }
   }
 
   private startPartial(): Promise<ResolvedMap<K, V>> {
@@ -358,30 +230,30 @@ export class ProjectedMap<K, V> {
 
     this._pendingPartial.clear();
 
-    const promise = Promise.resolve()
-      .then(() => this._values(keys))
-      .then((array) => this.mergePartial(keys, array));
-
     this._inflight = { type: 'partial', promise: deferred.promise };
 
-    promise.then(
-      (map) => {
-        this._inflight = null;
-        this.drain();
-
-        deferred.resolve(map as unknown as ResolvedMap<K, V>);
-      },
-      (error) => {
-        this._tombstones.clear();
-
-        this._inflight = null;
-        this.drain();
-
-        deferred.reject(error);
-      },
-    );
+    void this.runPartial(keys, deferred);
 
     return deferred.promise;
+  }
+
+  private async runPartial(keys: K[], deferred: Deferred<ResolvedMap<K, V>>): Promise<void> {
+    try {
+      const array = await Promise.try(() => this._values(keys));
+      const map = this.mergePartial(keys, array);
+
+      this._inflight = null;
+      this.drain();
+
+      deferred.resolve(map as unknown as ResolvedMap<K, V>);
+    } catch (error) {
+      this._tombstones.clear();
+
+      this._inflight = null;
+      this.drain();
+
+      deferred.reject(error);
+    }
   }
 
   private mergePartial(requestedKeys: K[], fetched: V[]): Map<K, V> {
@@ -464,7 +336,7 @@ export class ProjectedMap<K, V> {
       return map;
     }
 
-    const sorted = [...map.values()].toSorted(this._sort);
+    const sorted = map.values().toArray().toSorted(this._sort);
     const next = new Map<K, V>();
 
     for (const item of sorted) {
@@ -472,6 +344,104 @@ export class ProjectedMap<K, V> {
     }
 
     return next;
+  }
+
+  getAllAsMap(): MaybePromise<ResolvedMap<K, V>> {
+    return maybeThen(this.getCache(), (map) => new Map(map));
+  }
+
+  /**
+   * Iteration order follows `sort` when configured, otherwise the order from the last full
+   * `values()` call with partial-refresh additions appended.
+   */
+  getAll(): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
+    return maybeThen(this.getCache(), (map) => map.values().toArray());
+  }
+
+  /** Returns one slot per requested key; missing keys become `undefined`. */
+  getByKeysSparse(keys: readonly K[]): MaybePromise<ReadonlyArray<Maybe<ReadonlyDeep<V>>>> {
+    if (keys.length === 0) {
+      return [];
+    }
+
+    return maybeThen(this.getCache(), (map) => keys.map((id) => map.get(id)));
+  }
+
+  getByKeys(keys: readonly K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>> {
+    return maybeThen(this.getByKeysSparse(keys), (values) => values.filter(defined));
+  }
+
+  getByKey(key: K): MaybePromise<Maybe<ReadonlyDeep<V>>> {
+    return maybeThen(this.getCache(), (map) => map.get(key));
+  }
+
+  get(keyOrKeys: readonly K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>>>;
+  get(keyOrKeys: K): MaybePromise<Maybe<ReadonlyDeep<V>>>;
+  get(keyOrKeys: K | readonly K[]): MaybePromise<ReadonlyArray<ReadonlyDeep<V>> | Maybe<ReadonlyDeep<V>>> {
+    if (Array.isArray(keyOrKeys)) {
+      return this.getByKeys(keyOrKeys as readonly K[]);
+    }
+
+    return this.getByKey(keyOrKeys as K);
+  }
+
+  /**
+   * Deletes entries locally without fetching. No-op when not yet resolved. If a refresh
+   * is in flight, the keys are tombstoned: the in-flight result drops them and a one-shot
+   * retry confirms the post-delete state.
+   */
+  delete(keyOrKeys: K | K[]): void {
+    if (this._state.status !== 'resolved') {
+      return;
+    }
+
+    const keys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
+
+    for (const key of keys) {
+      this._state.map.delete(key);
+
+      if (this._inflight !== null) {
+        this._tombstones.add(key);
+      }
+    }
+  }
+
+  /** Clears cached values so the next access refetches. */
+  clear() {
+    this._state = { status: 'empty' };
+  }
+
+  refresh(): Promise<ResolvedMap<K, V>>;
+  refresh(keyOrKeys: K | K[]): Promise<ResolvedMap<K, V>>;
+
+  /**
+   * Stale-while-revalidate refresh.
+   *
+   * - `refresh()` (or `refresh([])`) does a full re-fetch via `values(undefined)`.
+   * - `refresh(key | keys)` does a partial re-fetch; requested keys missing from the result
+   *   are deleted. Falls back to full when no resolved map exists yet.
+   *
+   * Concurrent calls coalesce: rapid partials within a debounce window merge into one fetch;
+   * a full/partial requested while another is in flight is queued. A queued full subsumes
+   * queued partial keys. Partial keys arriving during an in-flight full are not subsumed —
+   * they run as a follow-up partial, since the full's snapshot may pre-date the change.
+   *
+   * On error, the stale map is preserved and the returned promise rejects.
+   */
+  refresh(keyOrKeys?: K | K[]): Promise<ResolvedMap<K, V>> {
+    if (keyOrKeys === undefined) {
+      return this.scheduleFull();
+    }
+
+    if (Array.isArray(keyOrKeys)) {
+      if (keyOrKeys.length === 0) {
+        return this.scheduleFull();
+      }
+
+      return this.schedulePartial(keyOrKeys);
+    }
+
+    return this.schedulePartial([keyOrKeys]);
   }
 }
 
