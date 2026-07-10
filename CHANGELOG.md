@@ -1,4 +1,4 @@
-## [2.2.1](https://github.com/entwico/projected/compare/v2.2.0...v2.2.1) (2026-04-17)
+# @entwico/projected
 
 ## 4.0.2
 
@@ -48,6 +48,8 @@
 ### Patch Changes
 
 - 770cc69: internal: switch release tooling from semantic-release to changesets
+
+## [2.2.1](https://github.com/entwico/projected/compare/v2.2.0...v2.2.1) (2026-04-17)
 
 ### Bug Fixes
 
