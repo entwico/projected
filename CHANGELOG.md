@@ -1,5 +1,11 @@
 ## [2.2.1](https://github.com/entwico/projected/compare/v2.2.0...v2.2.1) (2026-04-17)
 
+## 4.0.2
+
+### Patch Changes
+
+- 9d9fbbf: fix TypeScript type declarations not being found by consumers
+
 ## 4.0.1
 
 ### Patch Changes
