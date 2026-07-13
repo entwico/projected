@@ -29,8 +29,11 @@ export type ResolverOptions<K, V> = {
   values: (keys: K[]) => MaybePromise<V[]>;
 
   /**
-   * Delay in ms that is used to buffer requests
-   * @default 50
+   * Extra time window (ms) for buffering requests before dispatch. `0` still batches all
+   * callers arriving in the same tick (the timer fires only after microtasks drain, so
+   * `Promise.all` fan-outs coalesce into one fetch); a positive value widens the window at
+   * the cost of that much latency on every uncached fetch.
+   * @default 0
    */
   delay?: number;
 
@@ -65,7 +68,7 @@ export class Resolver<K, V> {
 
     this.values = values;
     this.key = key;
-    this.delay = delay ?? 50;
+    this.delay = delay ?? 0;
     this.maxChunkSize = maxChunkSize ?? 1000;
   }
 

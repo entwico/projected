@@ -195,12 +195,12 @@ const users = new ProjectedLazyMap<string, User>({
     const response = await fetch(`/api/users?ids=${ids.join(",")}`);
     return response.json();
   },
-  delay: 50, // batch requests within 50ms window (default)
+  delay: 0, // extra batching window in ms (default 0 — same-tick calls still batch)
   maxChunkSize: 1000, // max items per batch (default)
   cache: true, // use built-in Map cache (default)
 });
 
-// these three calls within 50ms get batched into one request
+// these three calls in the same tick get batched into one request
 const [user1, user2, user3] = await Promise.all([users.getByKey("user1"), users.getByKey("user2"), users.getByKey("user3")]);
 
 // subsequent calls for cached users return T (not Promise)
@@ -209,10 +209,10 @@ await users.getByKey("user1");
 
 ### Request Batching
 
-When multiple `getByKey()` calls happen within the `delay` window, they're combined into a single `values()` call:
+When multiple `getByKey()` calls happen within the `delay` window, they're combined into a single `values()` call. With the default `delay: 0` the window covers all calls made in the same tick — the dispatch timer only fires after microtasks drain, so `Promise.all` fan-outs still coalesce. Set a positive `delay` to widen the window at the cost of that much latency on every uncached fetch:
 
 ```ts
-// all these calls within 50ms...
+// all these calls in the same tick...
 users.getByKey("a");
 users.getByKey("b");
 users.getByKey("c");
