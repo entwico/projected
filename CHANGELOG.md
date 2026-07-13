@@ -1,5 +1,11 @@
 # @entwico/projected
 
+## 5.0.0
+
+### Major Changes
+
+- 02727ee: ProjectedLazyMap no longer waits 50ms before dispatching a batch — same-tick calls still coalesce; pass `delay` explicitly to restore a window
+
 ## 4.0.2
 
 ### Patch Changes

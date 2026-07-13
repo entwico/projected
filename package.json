@@ -1,6 +1,6 @@
 {
   "name": "@entwico/projected",
-  "version": "4.0.2",
+  "version": "5.0.0",
   "description": "Collections of objects that rely on remote data sources. Hides the complexity of fetching and caching data from a remote source",
   "type": "module",
   "author": "admin@entwico.com",
