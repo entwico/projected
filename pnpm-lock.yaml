@@ -10,7 +10,7 @@ importers:
     dependencies:
       '@entwico/dash':
         specifier: ^1.0.0
-        version: 1.0.0
+        version: 1.4.0
     devDependencies:
       '@changesets/cli':
         specifier: ^2.31.0
@@ -47,6 +47,7 @@ packages:
 
   '@astroscope/eslint-plugin-i18n@0.2.0':
     resolution: {integrity: sha512-VaITmts2BsxUZHF0wUpEiT33TyTsJqiQHAQRwDalTxJFw1DfSXhzhAS6XxqE34f0UeGjFBXc7AhNcfrho+NWlw==}
+    deprecated: merged into @astroscope/eslint-plugin — the i18n rules ship as configs.i18n with unchanged rule ids
     peerDependencies:
       eslint: ^9.0.0 || ^10.0.0
 
@@ -197,8 +198,8 @@ packages:
   '@emnapi/wasi-threads@1.2.1':
     resolution: {integrity: sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==}
 
-  '@entwico/dash@1.0.0':
-    resolution: {integrity: sha512-g8CYcx1i62yA3/GlTAsTkD0rWPOIl6FhNxHzVSfpGDE+Fihlm8wm0XTat87BChADNvgs7OwoM/tAljgClKcMsA==}
+  '@entwico/dash@1.4.0':
+    resolution: {integrity: sha512-gYFVe92k7b+0Xtv/NCqZ1JrlGIKxrhb+udwnrRSEojeKdOy7j/zw6oEsLUBlPJ/ZLc1nKkUc/YhlYs6qfkt/Ew==}
     peerDependencies:
       clsx: '>=2'
       react: '>=18'
@@ -2745,7 +2746,7 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
-  '@entwico/dash@1.0.0': {}
+  '@entwico/dash@1.4.0': {}
 
   '@entwico/eslint-config@2.0.7(@typescript-eslint/utils@8.63.0(eslint@10.6.0(jiti@2.7.0))(typescript@6.0.3))(astro-eslint-parser@2.1.0)(eslint@10.6.0(jiti@2.7.0))(tailwindcss@4.3.0)(typescript@6.0.3)':
     dependencies:
