@@ -92,7 +92,6 @@ export class ProjectedLazyMap<K, V> {
       }
     }
 
-    // all cached - return sync
     if (missingKeys.length === 0) {
       return keys.map((key) => foundMap.get(key) as ReadonlyDeep<V> | undefined);
     }

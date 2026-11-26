@@ -24,7 +24,7 @@ function createSource() {
     return ids.map((id) => {
       const item: Item = { id, payload: Array.from({ length: 1000 }, () => 0) };
 
-      fetched.set(id, [...fetched.get(id) ?? [], new WeakRef(item)]);
+      fetched.set(id, [...(fetched.get(id) ?? []), new WeakRef(item)]);
 
       return item;
     });

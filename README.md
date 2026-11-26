@@ -27,7 +27,7 @@ npm i @entwico/projected
 - **Background refresh** - `refresh()` returns a promise for fresh data (or error), keeps stale value in cache on error
 - **Request batching** - `ProjectedLazyMap` batches individual lookups into single batch requests
 - **Pluggable cache** - use built-in `Map`, LRU cache, or any custom implementation
-- **Deep freeze protection** - optionally freeze returned objects to prevent accidental mutations
+- **Readonly results** - returned values are typed `ReadonlyDeep<V>`
 
 ## API Overview
 
@@ -127,7 +127,7 @@ how you propagate upstream deletions:
 // re-fetch a single country
 await countries.refresh("US");
 
-// re-fetch many (rapid calls within ~50ms are coalesced into one fetch)
+// re-fetch many (rapid calls are coalesced into one fetch)
 await Promise.all([countries.refresh("US"), countries.refresh(["DE", "FR"])]);
 
 // if the upstream no longer returns 'US', it's removed from the cached map
@@ -135,7 +135,7 @@ await Promise.all([countries.refresh("US"), countries.refresh(["DE", "FR"])]);
 
 Coalescing rules:
 
-- Rapid `refresh(keys)` calls within a 50ms window are merged into a single fetch.
+- Rapid `refresh(keys)` calls are merged into a single fetch.
 - A `refresh()` (full) requested while a partial is in flight is queued and runs after the partial completes; it subsumes any pending partial keys.
 - A `refresh(keys)` called against a map that has not yet been resolved falls back to a full refresh.
 
@@ -157,7 +157,6 @@ await countries.getAll(); // sorted by name
 ### Local Delete
 
 `delete(key | keys)` removes entries from the cached map without triggering a fetch.
-Useful when the entry is gone: the change can be reflected immediately.
 
 ```ts
 await countries.delete("US");
@@ -209,7 +208,7 @@ await users.getByKey("user1");
 
 ### Request Batching
 
-When multiple `getByKey()` calls happen within the `delay` window, they're combined into a single `values()` call. With the default `delay: 0` the window covers all calls made in the same tick — the dispatch timer only fires after microtasks drain, so `Promise.all` fan-outs still coalesce. Set a positive `delay` to widen the window at the cost of that much latency on every uncached fetch:
+When multiple `getByKey()` calls happen within the `delay` window, they're combined into a single `values()` call. With the default `delay: 0` the window covers all calls made in the same tick, `Promise.all` fan-outs included. A positive `delay` widens the window and adds that much latency to every uncached fetch:
 
 ```ts
 // all these calls in the same tick...
@@ -260,30 +259,15 @@ const users = new ProjectedLazyMap<string, User>({
 
 All three classes support these options:
 
-| Option       | Type                           | Default  | Description                            |
-| ------------ | ------------------------------ | -------- | -------------------------------------- |
-| `protection` | `'freeze' \| 'none'`           | `'none'` | Deep freeze returned objects           |
-| `cache`      | `boolean \| ProjectedMapCache` | `true`   | Enable/disable or provide custom cache |
+| Option  | Type      | Default | Description                                                                                  |
+| ------- | --------- | ------- | -------------------------------------------------------------------------------------------- |
+| `cache` | `boolean` | `true`  | Enable/disable caching; `ProjectedLazyMap` also accepts a custom cache (see [Custom Cache](#custom-cache)) |
 
 `ProjectedMap` additionally accepts:
 
 | Option | Type               | Default | Description                                                             |
 | ------ | ------------------ | ------- | ----------------------------------------------------------------------- |
 | `sort` | `(a, b) => number` | —       | Optional comparator applied on every materialization (full and partial) |
-
-### Protection
-
-Enable `protection: 'freeze'` to prevent accidental mutations:
-
-```ts
-const config = new ProjectedValue({
-  value: async () => ({ setting: "value" }),
-  protection: "freeze",
-});
-
-const result = await config.get();
-result.setting = "new"; // throws TypeError in strict mode
-```
 
 ## Refresh Pattern
 
@@ -318,7 +302,6 @@ For server applications that prefetch data at startup, you can guarantee sync ac
 
 ```ts
 const map = new ProjectedMap<string, Category>({
-  protection: "freeze",
   key: (v) => v.id,
   values: () => fetchCategories(),
 });

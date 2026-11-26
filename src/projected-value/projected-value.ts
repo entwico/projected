@@ -65,7 +65,6 @@ export class ProjectedValue<V> {
 
       return value;
     } catch (error) {
-      // on error, keep stale value if we have one
       this._state = staleValue !== undefined && this.shouldCache
         ? { status: 'resolved', value: staleValue }
         : { status: 'empty' };
@@ -81,17 +80,14 @@ export class ProjectedValue<V> {
   get(): MaybePromise<ReadonlyDeep<V>> {
     const state = this._state;
 
-    // cache hit - return sync
     if (state.status === 'resolved' || state.status === 'refreshing') {
       return state.value;
     }
 
-    // already fetching - return existing promise
     if (state.status === 'pending') {
       return state.promise;
     }
 
-    // cache miss - fetch
     return this.fetch();
   }
 
@@ -113,17 +109,14 @@ export class ProjectedValue<V> {
   refresh(): Promise<ReadonlyDeep<V>> {
     const state = this._state;
 
-    // already refreshing - return existing promise
     if (state.status === 'refreshing') {
       return state.promise;
     }
 
-    // nothing cached or still pending
     if (state.status === 'empty' || state.status === 'pending') {
       return this.triggerBackgroundRefresh();
     }
 
-    // have cached value - trigger refresh
     return this.triggerBackgroundRefresh(state.value);
   }
 }

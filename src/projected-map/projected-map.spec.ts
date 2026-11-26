@@ -19,14 +19,12 @@ describe('sync behavior', () => {
       values: () => testData,
     });
 
-    // first call - async (fetching)
     const result1 = map.getByKey('1');
 
     expect(result1 instanceof Promise).toBe(true);
 
     await result1;
 
-    // second call - sync (cached)
     const result2 = map.getByKey('1');
 
     expect(result2 instanceof Promise).toBe(false);
@@ -39,10 +37,8 @@ describe('sync behavior', () => {
       values: () => testData,
     });
 
-    // populate cache
     await map.getByKey('1');
 
-    // all methods should be sync now
     expect(map.getByKey('2') instanceof Promise).toBe(false);
     expect(map.getByKeys(['1', '2']) instanceof Promise).toBe(false);
     expect(map.getByKeysSparse(['1', '2']) instanceof Promise).toBe(false);
@@ -58,7 +54,6 @@ describe('sync behavior', () => {
       values: () => testData,
     });
 
-    // refresh always returns a promise
     const result = map.refresh();
 
     expect(result instanceof Promise).toBe(true);
@@ -217,13 +212,11 @@ describe('refresh', () => {
       },
     });
 
-    // populate cache
     const initial = await map.getByKey('1');
 
     expect(initial?.title).toBe('title1-v1');
     expect(fetchCount).toBe(1);
 
-    // refresh resolves to fresh map
     const fresh = await map.refresh();
 
     expect(fresh.get('1')?.title).toBe('title1-v2');
@@ -244,18 +237,14 @@ describe('refresh', () => {
       },
     });
 
-    // populate cache
     const initial = await map.getByKey('1');
 
     expect(initial).toEqual(testData[0]);
 
-    // make next fetch fail
     shouldFail = true;
 
-    // refresh should reject
     await expect(map.refresh()).rejects.toThrow('refresh error');
 
-    // cache should still have the original value
     const afterError = await map.getByKey('1');
 
     expect(afterError).toEqual(testData[0]);
@@ -274,12 +263,10 @@ describe('refresh', () => {
       },
     });
 
-    // populate cache
     await map.getByKey('1');
 
     expect(fetchCount).toBe(1);
 
-    // call refresh multiple times - all return same promise
     const p1 = map.refresh();
     const p2 = map.refresh();
     const p3 = map.refresh();
@@ -544,7 +531,11 @@ describe('sort', () => {
     await map.refresh();
 
     expect((map.getAll() as TestObject[]).map((i) => i.title)).toEqual([
-      'title1', 'title2', 'title3', 'title4', 'title5',
+      'title1',
+      'title2',
+      'title3',
+      'title4',
+      'title5',
     ]);
 
     // mutate '2' to a title that should sort first
@@ -555,7 +546,11 @@ describe('sort', () => {
     await map.refresh(['2']);
 
     expect((map.getAll() as TestObject[]).map((i) => i.title)).toEqual([
-      'aaa', 'title1', 'title3', 'title4', 'title5',
+      'aaa',
+      'title1',
+      'title3',
+      'title4',
+      'title5',
     ]);
   });
 });
@@ -599,8 +594,7 @@ describe('delete', () => {
 
   it('should not trigger any fetch', async () => {
     const values = vi.fn((keys: string[] | undefined) =>
-      keys === undefined ? testData : testData.filter((i) => keys.includes(i.id)),
-    );
+      keys === undefined ? testData : testData.filter((i) => keys.includes(i.id)));
 
     const map = new ProjectedMap<string, TestObject>({
       key: (item) => item.id,

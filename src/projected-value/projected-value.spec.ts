@@ -10,14 +10,12 @@ describe('sync behavior', () => {
       value: () => testValue,
     });
 
-    // first call - async (fetching)
     const result1 = value.get();
 
     expect(result1 instanceof Promise).toBe(true);
 
     await result1;
 
-    // second call - sync (cached)
     const result2 = value.get();
 
     expect(result2 instanceof Promise).toBe(false);
@@ -29,7 +27,6 @@ describe('sync behavior', () => {
       value: () => testValue,
     });
 
-    // refresh always returns a promise
     const result = value.refresh();
 
     expect(result instanceof Promise).toBe(true);
@@ -126,13 +123,11 @@ describe('refresh', () => {
       },
     });
 
-    // populate cache
     const initial = await value.get();
 
     expect(initial.title).toBe('title1');
     expect(fetchCount).toBe(1);
 
-    // refresh resolves to fresh value
     const fresh = await value.refresh();
 
     expect(fresh.title).toBe('title2');
@@ -152,18 +147,14 @@ describe('refresh', () => {
       },
     });
 
-    // populate cache
     const initial = await value.get();
 
     expect(initial).toEqual(testValue);
 
-    // make next fetch fail
     shouldFail = true;
 
-    // refresh should reject
     await expect(value.refresh()).rejects.toThrow('refresh error');
 
-    // cache should still have the original value
     const afterError = await value.get();
 
     expect(afterError).toBe(initial);
@@ -181,12 +172,10 @@ describe('refresh', () => {
       },
     });
 
-    // populate cache
     await value.get();
 
     expect(fetchCount).toBe(1);
 
-    // call refresh multiple times - all return same promise
     const p1 = value.refresh();
     const p2 = value.refresh();
     const p3 = value.refresh();

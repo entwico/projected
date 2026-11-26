@@ -19,14 +19,12 @@ describe('sync behavior', () => {
       values: (ids) => testData.filter((item) => ids.includes(item.id)),
     });
 
-    // first call - async (fetching)
     const result1 = map.getByKey('1');
 
     expect(result1 instanceof Promise).toBe(true);
 
     await result1;
 
-    // second call - sync (cached)
     const result2 = map.getByKey('1');
 
     expect(result2 instanceof Promise).toBe(false);
@@ -39,10 +37,8 @@ describe('sync behavior', () => {
       values: (ids) => testData.filter((item) => ids.includes(item.id)),
     });
 
-    // populate cache
     await map.getByKeys(['1', '2', '3']);
 
-    // all cached - should be sync
     const result = map.getByKeys(['1', '2']);
 
     expect(result instanceof Promise).toBe(false);
@@ -55,10 +51,8 @@ describe('sync behavior', () => {
       values: (ids) => testData.filter((item) => ids.includes(item.id)),
     });
 
-    // populate cache with only '1'
     await map.getByKey('1');
 
-    // '2' not cached - should be async
     const result = map.getByKeys(['1', '2']);
 
     expect(result instanceof Promise).toBe(true);
@@ -74,7 +68,6 @@ describe('sync behavior', () => {
       values: (ids) => testData.filter((item) => ids.includes(item.id)),
     });
 
-    // refresh always returns a promise
     const result = map.refresh('1');
 
     expect(result instanceof Promise).toBe(true);
@@ -310,14 +303,6 @@ describe('cache', () => {
 
     expect(res).toBeTruthy();
     expect(res?.title).toBe('title3');
-
-    // expect(cache).toBeTruthy();
-
-    // // because it's a noop cache
-    // expect(cache.has('3')).toBeFalsy();
-    // expect(cache.get('3')).toBeUndefined();
-    // expect(() => cache.delete('3')).not.toThrow();
-    // expect(() => cache.clear()).not.toThrow();
   });
 
   it('should use custom cache', async () => {
@@ -444,13 +429,11 @@ describe('refresh', () => {
       cache,
     });
 
-    // populate cache
     const initial = await map.getByKey('3');
 
     expect(initial?.title).toBe('title3-v1');
     expect(fetchCount).toBe(1);
 
-    // refresh resolves to fresh value
     const fresh = await map.refresh('3');
 
     expect(fresh?.title).toBe('title3-v2');
@@ -473,12 +456,10 @@ describe('refresh', () => {
       cache,
     });
 
-    // populate cache
     await map.getByKeys(['3', '4']);
 
     expect(fetchCount).toBe(1);
 
-    // refresh resolves to fresh values
     const fresh = await map.refresh(['3', '4', '5']);
 
     expect(fresh.length).toBe(3);
@@ -504,18 +485,14 @@ describe('refresh', () => {
       cache,
     });
 
-    // populate cache
     const initial = await map.getByKey('3');
 
     expect(initial).toEqual(testData[2]);
 
-    // make next fetch fail
     shouldFail = true;
 
-    // refresh should reject
     await expect(map.refresh('3')).rejects.toThrow('refresh error');
 
-    // cache should still have the original value
     expect(cache.get('3')).toEqual(testData[2]);
   });
 

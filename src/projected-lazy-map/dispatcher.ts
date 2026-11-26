@@ -78,13 +78,11 @@ export class Resolver<K, V> {
   }
 
   private async schedule() {
-    // if the buffer is full, dispatch immediately
     while (this.queue.size > this.maxChunkSize) {
       this.clearTimer();
       await this.dispatch();
     }
 
-    // already scheduled
     if (this.timeout) {
       return;
     }
@@ -96,14 +94,12 @@ export class Resolver<K, V> {
   }
 
   private async dispatch() {
-    // get relevant chunk of keys from the queue
     const keys = [...this.queue].slice(0, this.maxChunkSize);
 
     if (keys.length === 0) {
       return;
     }
 
-    // remove dispatched keys from the queue
     keys.forEach((key) => this.queue.delete(key));
 
     const results = new ConsumerMap<K, V>(keys.map((key) => [key, { value: undefined }]));
@@ -150,10 +146,12 @@ export class Resolver<K, V> {
         pending.delete(key);
       });
 
-      if (pending.size === 0) {
-        this.consumers.delete(consume);
-        deferred.resolve(resolved);
+      if (pending.size > 0) {
+        return;
       }
+
+      this.consumers.delete(consume);
+      deferred.resolve(resolved);
     };
 
     this.consumers.add(consume);
