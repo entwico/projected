@@ -1,5 +1,15 @@
 # @entwico/projected
 
+## 5.0.1
+
+### Patch Changes
+
+- a48513f: `clear()` now also invalidates a fetch that is still running: its result is no longer written into the cache, and a read after the `clear()` waits for a fresh fetch (`ProjectedValue`, `ProjectedMap`, `ProjectedLazyMap`)
+- a48513f: `ProjectedLazyMap`: `delete(key)` now also invalidates a fetch of that key that is still running — its result is no longer written back into the cache
+- a48513f: `ProjectedLazyMap`: a failed request no longer rejects callers whose keys were not part of it
+- a48513f: `ProjectedLazyMap`: falsy values (`0`, `''`, `false`) are returned by `getByKeys` / `getByKeysSparse` and cached instead of being treated as missing
+- a48513f: `ProjectedValue`: a `refresh()` during the initial fetch is no longer overwritten when the initial fetch answers last
+
 ## 5.0.0
 
 ### Major Changes
