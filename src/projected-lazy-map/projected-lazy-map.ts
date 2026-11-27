@@ -17,6 +17,9 @@ export type ProjectedLazyMapOptions<K, V> = ResolverOptions<K, V> & {
   cache?: boolean | ProjectedMapCache<K, V>;
 };
 
+/** What happened to the cache while one fetch was running. */
+type Invalidations<K> = { deleted: Set<K>; cleared: boolean };
+
 interface GetOptions {
   immediate?: boolean;
 }
@@ -28,6 +31,8 @@ interface GetOptions {
 export class ProjectedLazyMap<K, V> {
   private readonly cache: ProjectedMapCache<K, V> = new Map();
   private readonly fetcher: Resolver<K, V>;
+  // one per running fetch: a fetch must not write back what was deleted or cleared while it ran
+  private readonly _invalidations = new Set<Invalidations<K>>();
 
   constructor({ cache, ...fetcherOptions }: ProjectedLazyMapOptions<K, V>) {
     this.fetcher = new Resolver(fetcherOptions);
@@ -39,30 +44,56 @@ export class ProjectedLazyMap<K, V> {
     }
   }
 
+  /** Fetches the keys; `isCurrent` tells which of them were not invalidated meanwhile and may go into the cache. */
+  private async fetch(keys: K[]) {
+    const invalidations: Invalidations<K> = { deleted: new Set(), cleared: false };
+
+    this._invalidations.add(invalidations);
+
+    try {
+      const fetchedMap = await this.fetcher.resolve(keys);
+
+      return { fetchedMap, isCurrent: (key: K) => !invalidations.cleared && !invalidations.deleted.has(key) };
+    } finally {
+      this._invalidations.delete(invalidations);
+    }
+  }
+
+  private invalidate(key: K) {
+    this.cache.delete(key);
+
+    for (const invalidations of this._invalidations) {
+      invalidations.deleted.add(key);
+    }
+  }
+
   private async fetchMissing(
     keys: readonly K[],
     missingKeys: K[],
     foundMap: Map<K, V>,
   ): Promise<ReadonlyArray<Maybe<ReadonlyDeep<V>>>> {
-    const fetchedMap = await this.fetcher.resolve(missingKeys);
+    const { fetchedMap, isCurrent } = await this.fetch(missingKeys);
 
     fetchedMap.forEach((value, valueKey) => {
-      if (!value) {
+      if (value === undefined) {
         return;
       }
 
       foundMap.set(valueKey, value);
-      this.cache.set(valueKey, value);
+
+      if (isCurrent(valueKey)) {
+        this.cache.set(valueKey, value);
+      }
     });
 
     return keys.map((key) => foundMap.get(key) as ReadonlyDeep<V> | undefined);
   }
 
   private async fetchByKey(key: K): Promise<Maybe<ReadonlyDeep<V>>> {
-    const fetchedMap = await this.fetcher.resolve([key]);
+    const { fetchedMap, isCurrent } = await this.fetch([key]);
     const value = fetchedMap.get(key);
 
-    if (value) {
+    if (value !== undefined && isCurrent(key)) {
       this.cache.set(key, value);
     }
 
@@ -85,10 +116,10 @@ export class ProjectedLazyMap<K, V> {
     for (const key of keys) {
       const hit = this.cache.get(key);
 
-      if (hit) {
-        foundMap.set(key, hit);
-      } else {
+      if (hit === undefined) {
         missingKeys.push(key);
+      } else {
+        foundMap.set(key, hit);
       }
     }
 
@@ -116,7 +147,7 @@ export class ProjectedLazyMap<K, V> {
   getByKey(key: K): MaybePromise<Maybe<ReadonlyDeep<V>>> {
     const hit = this.cache.get(key);
 
-    if (hit) {
+    if (hit !== undefined) {
       return hit as ReadonlyDeep<V>;
     }
 
@@ -149,12 +180,12 @@ export class ProjectedLazyMap<K, V> {
    */
   delete(keyOrKeys: K | K[]) {
     if (Array.isArray(keyOrKeys)) {
-      keyOrKeys.forEach((key) => this.cache.delete(key));
+      keyOrKeys.forEach((key) => this.invalidate(key));
 
       return;
     }
 
-    this.cache.delete(keyOrKeys);
+    this.invalidate(keyOrKeys);
   }
 
   /**
@@ -163,6 +194,10 @@ export class ProjectedLazyMap<K, V> {
    */
   clear() {
     this.cache.clear();
+
+    for (const invalidations of this._invalidations) {
+      invalidations.cleared = true;
+    }
   }
 
   refresh(key: K): Promise<Maybe<ReadonlyDeep<V>>>;
@@ -191,9 +226,13 @@ export class ProjectedLazyMap<K, V> {
       return [];
     }
 
-    const fetchedMap = await this.fetcher.resolve(keys);
+    const { fetchedMap, isCurrent } = await this.fetch(keys);
 
     for (const key of keys) {
+      if (!isCurrent(key)) {
+        continue;
+      }
+
       const value = fetchedMap.get(key);
 
       if (value === undefined) {

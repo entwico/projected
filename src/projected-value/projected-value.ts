@@ -31,6 +31,8 @@ export class ProjectedValue<V> {
   private _state: CacheState<V> = { status: 'empty' };
   private readonly valueFn: ProjectedValueOptions<V>['value'];
   private readonly shouldCache: boolean;
+  // the latest fetch, or the clear() after it: only that fetch may write its outcome into the state
+  private _fetchId = 0;
 
   constructor({ value, cache }: ProjectedValueOptions<V>) {
     this.valueFn = value;
@@ -56,18 +58,24 @@ export class ProjectedValue<V> {
   }
 
   private async fetchValue(staleValue?: ReadonlyDeep<V>): Promise<ReadonlyDeep<V>> {
+    const fetchId = ++this._fetchId;
+
     try {
       // Promise.try converts a synchronous throw into a rejection, so the catch below
       // runs only after the caller has assigned the pending/refreshing state
       const value = (await Promise.try(() => this.valueFn())) as ReadonlyDeep<V>;
 
-      this._state = this.shouldCache ? { status: 'resolved', value } : { status: 'empty' };
+      if (fetchId === this._fetchId) {
+        this._state = this.shouldCache ? { status: 'resolved', value } : { status: 'empty' };
+      }
 
       return value;
     } catch (error) {
-      this._state = staleValue !== undefined && this.shouldCache
-        ? { status: 'resolved', value: staleValue }
-        : { status: 'empty' };
+      if (fetchId === this._fetchId) {
+        this._state = staleValue !== undefined && this.shouldCache
+          ? { status: 'resolved', value: staleValue }
+          : { status: 'empty' };
+      }
 
       throw error;
     }
@@ -96,6 +104,7 @@ export class ProjectedValue<V> {
    * @returns void
    */
   clear() {
+    this._fetchId++;
     this._state = { status: 'empty' };
   }
 

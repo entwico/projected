@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ProjectedLazyMap, createProjectedLazyMap } from './projected-lazy-map.js';
 
@@ -565,5 +565,375 @@ describe('refresh', () => {
 
     expect(fresh).toEqual([]);
     expect(callCount).toBe(0);
+  });
+});
+
+describe('batching', () => {
+  function createMap(options?: { delay?: number; maxChunkSize?: number }) {
+    const values = vi.fn((ids: string[]) => testData.filter((item) => ids.includes(item.id)));
+    const map = new ProjectedLazyMap<string, TestObject>({ key: (item) => item.id, values, ...options });
+
+    return { map, values };
+  }
+
+  it('should fetch the keys of all callers of one tick in one request, each key once', async () => {
+    const { map, values } = createMap();
+
+    const [one, same, many] = await Promise.all([
+      map.getByKey('1'),
+      map.getByKey('1'),
+      map.getByKeys(['2', '1', '3', '3']),
+    ]);
+
+    expect(one).toBe(same);
+    expect(many.map((item) => item.id)).toEqual(['2', '1', '3', '3']);
+    expect(values.mock.calls).toEqual([[['1', '2', '3']]]);
+  });
+
+  it('should fetch only the keys that are not cached', async () => {
+    const { map, values } = createMap();
+
+    await map.getByKeys(['1', '2']);
+
+    const result = await map.getByKeys(['1', '3', '2', '4']);
+
+    expect(result.map((item) => item.id)).toEqual(['1', '3', '2', '4']);
+    expect(values.mock.calls).toEqual([[['1', '2']], [['3', '4']]]);
+  });
+
+  it('should batch callers that arrive within the delay window', async () => {
+    const { map, values } = createMap({ delay: 50 });
+
+    const first = map.getByKey('1');
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const second = map.getByKey('2');
+
+    expect(values).not.toHaveBeenCalled();
+
+    expect(await first).toBe(testData[0]);
+    expect(await second).toBe(testData[1]);
+    expect(values.mock.calls).toEqual([[['1', '2']]]);
+  });
+
+  it('should fetch separately for callers of different ticks when there is no delay', async () => {
+    const { map, values } = createMap();
+
+    const first = map.getByKey('1');
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    await map.getByKey('2');
+    await first;
+
+    expect(values.mock.calls).toEqual([[['1']], [['2']]]);
+  });
+
+  it('should split a batch into requests of at most maxChunkSize keys', async () => {
+    const { map, values } = createMap({ maxChunkSize: 2 });
+
+    const result = await map.getByKeys(['1', '2', '3', '4', '5']);
+
+    expect(result.map((item) => item.id)).toEqual(['1', '2', '3', '4', '5']);
+    expect(values.mock.calls.map(([keys]) => keys)).toEqual([['1', '2'], ['3', '4'], ['5']]);
+  });
+});
+
+describe('errors', () => {
+  it('should reject instead of throwing when values throws synchronously', async () => {
+    const map = new ProjectedLazyMap<string, TestObject>({
+      key: (item) => item.id,
+      values: () => {
+        throw new Error('sync error');
+      },
+    });
+
+    const result = map.getByKey('1');
+
+    expect(result).toBeInstanceOf(Promise);
+
+    await expect(result).rejects.toThrow('sync error');
+  });
+
+  it('should reject every caller of a failed batch', async () => {
+    const map = new ProjectedLazyMap<string, TestObject>({
+      key: (item) => item.id,
+      values: async () => {
+        throw new Error('fetch error');
+      },
+    });
+
+    const results = await Promise.allSettled([map.getByKey('1'), map.getByKeys(['2', '3']), map.refresh('4')]);
+
+    expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected', 'rejected']);
+  });
+
+  it('should fetch again after a failed fetch', async () => {
+    const values = vi.fn<(ids: string[]) => Promise<TestObject[]>>()
+      .mockRejectedValueOnce(new Error('fetch error'))
+      .mockImplementation(async (ids) => testData.filter((item) => ids.includes(item.id)));
+
+    const map = new ProjectedLazyMap<string, TestObject>({ key: (item) => item.id, values });
+
+    await expect(map.getByKey('1')).rejects.toThrow('fetch error');
+
+    expect(await map.getByKey('1')).toBe(testData[0]);
+    expect(values).toHaveBeenCalledTimes(2);
+  });
+
+  it('should not reject a caller whose keys were not part of the failed request', async () => {
+    const requests: { keys: string[]; deferred: PromiseWithResolvers<TestObject[]> }[] = [];
+
+    const map = new ProjectedLazyMap<string, TestObject>({
+      key: (item) => item.id,
+      values: (keys) => {
+        const deferred = Promise.withResolvers<TestObject[]>();
+
+        requests.push({ keys, deferred });
+
+        return deferred.promise;
+      },
+    });
+
+    const first = Promise.allSettled([map.getByKey('1')]);
+
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+
+    const second = Promise.allSettled([map.getByKey('2')]);
+
+    requests[0]!.deferred.reject(new Error('fetch error'));
+
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+
+    requests[1]!.deferred.resolve([testData[1]!]);
+
+    expect(await first).toEqual([expect.objectContaining({ status: 'rejected' })]);
+    expect(await second).toEqual([{ status: 'fulfilled', value: testData[1] }]);
+  });
+});
+
+describe('invalidation', () => {
+  function createMap(cache?: boolean) {
+    const values = vi.fn((ids: string[]) => testData.filter((item) => ids.includes(item.id)));
+
+    const map = new ProjectedLazyMap<string, TestObject>({
+      key: (item) => item.id,
+      values,
+      ...(cache !== undefined && { cache }),
+    });
+
+    return { map, values };
+  }
+
+  it('should fetch a deleted key again and keep the others', async () => {
+    const { map, values } = createMap();
+
+    await map.getByKeys(['1', '2']);
+
+    map.delete('1');
+
+    expect(map.getByKey('2')).toBe(testData[1]);
+    expect(await map.getByKey('1')).toBe(testData[0]);
+    expect(values.mock.calls).toEqual([[['1', '2']], [['1']]]);
+  });
+
+  it('should accept an array of keys to delete', async () => {
+    const { map, values } = createMap();
+
+    await map.getByKeys(['1', '2', '3']);
+
+    map.delete(['1', '3']);
+
+    expect(map.getByKey('2')).toBe(testData[1]);
+
+    await map.getByKeys(['1', '2', '3']);
+
+    expect(values.mock.calls).toEqual([[['1', '2', '3']], [['1', '3']]]);
+  });
+
+  it('should fetch everything again after clear', async () => {
+    const { map, values } = createMap();
+
+    await map.getByKeys(['1', '2']);
+
+    map.clear();
+
+    const result = map.getByKeys(['1', '2']);
+
+    expect(result).toBeInstanceOf(Promise);
+    expect(await result).toEqual([testData[0], testData[1]]);
+    expect(values).toHaveBeenCalledTimes(2);
+  });
+
+  it('should serve the refreshed value synchronously afterwards', async () => {
+    let version = 1;
+
+    const map = new ProjectedLazyMap<string, TestObject>({
+      key: (item) => item.id,
+      values: (ids) => ids.map((id) => ({ id, title: `v${version}` })),
+    });
+
+    await map.getByKey('1');
+
+    version = 2;
+
+    await map.refresh('1');
+
+    expect(map.getByKey('1')).toEqual({ id: '1', title: 'v2' });
+  });
+
+  it('should fetch on every read with cache: false', async () => {
+    const { map, values } = createMap(false);
+
+    expect(await map.getByKey('1')).toBe(testData[0]);
+    expect(await map.refresh('1')).toBe(testData[0]);
+
+    const again = map.getByKeys(['1']);
+
+    expect(again).toBeInstanceOf(Promise);
+    expect(await again).toEqual([testData[0]]);
+    expect(values).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('falsy values', () => {
+  it('should return and cache falsy values', async () => {
+    const values = vi.fn((keys: number[]) => keys);
+    const map = new ProjectedLazyMap<number, number>({ key: (item) => item, values });
+
+    expect(await map.getByKeysSparse([0, 1])).toEqual([0, 1]);
+    expect(map.getByKey(0)).toBe(0);
+    expect(values).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('clear during a fetch', () => {
+  function createMap() {
+    const requests: PromiseWithResolvers<TestObject[]>[] = [];
+
+    const map = new ProjectedLazyMap<string, TestObject>({
+      key: (item) => item.id,
+      values: () => {
+        const request = Promise.withResolvers<TestObject[]>();
+
+        requests.push(request);
+
+        return request.promise;
+      },
+    });
+
+    return { map, requests };
+  }
+
+  it.each([
+    ['getByKey', (map: ProjectedLazyMap<string, TestObject>) => map.getByKey('1')],
+    ['getByKeys', (map: ProjectedLazyMap<string, TestObject>) => map.getByKeys(['1'])],
+    ['refresh', (map: ProjectedLazyMap<string, TestObject>) => map.refresh('1')],
+  ])('should not cache what a %s fetched before the clear', async (_, read) => {
+    const { map, requests } = createMap();
+
+    const before = read(map);
+
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+
+    map.clear();
+
+    requests[0]!.resolve([{ id: '1', title: 'before clear' }]);
+
+    // the caller that asked before the clear still gets its answer
+    expect([await before].flat()).toEqual([{ id: '1', title: 'before clear' }]);
+
+    const after = map.getByKey('1');
+
+    expect(after).toBeInstanceOf(Promise);
+
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+
+    requests[1]!.resolve([{ id: '1', title: 'after clear' }]);
+
+    expect(await after).toEqual({ id: '1', title: 'after clear' });
+  });
+});
+
+describe('delete during a fetch', () => {
+  function createMap() {
+    const requests: PromiseWithResolvers<TestObject[]>[] = [];
+
+    const map = new ProjectedLazyMap<string, TestObject>({
+      key: (item) => item.id,
+      values: () => {
+        const request = Promise.withResolvers<TestObject[]>();
+
+        requests.push(request);
+
+        return request.promise;
+      },
+    });
+
+    return { map, requests };
+  }
+
+  it.each([
+    ['getByKey', (map: ProjectedLazyMap<string, TestObject>) => map.getByKey('1')],
+    ['getByKeys', (map: ProjectedLazyMap<string, TestObject>) => map.getByKeys(['1'])],
+    ['refresh', (map: ProjectedLazyMap<string, TestObject>) => map.refresh('1')],
+  ])('should not cache what a %s fetched before the delete', async (_, read) => {
+    const { map, requests } = createMap();
+
+    const before = read(map);
+
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+
+    map.delete('1');
+
+    requests[0]!.resolve([{ id: '1', title: 'before delete' }]);
+
+    // the caller that asked before the delete still gets its answer
+    expect([await before].flat()).toEqual([{ id: '1', title: 'before delete' }]);
+
+    const after = map.getByKey('1');
+
+    expect(after).toBeInstanceOf(Promise);
+
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+
+    requests[1]!.resolve([{ id: '1', title: 'after delete' }]);
+
+    expect(await after).toEqual({ id: '1', title: 'after delete' });
+  });
+
+  it('should still cache the other keys of the same fetch', async () => {
+    const { map, requests } = createMap();
+
+    const fetched = map.getByKeys(['1', '2', '3']);
+
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+
+    map.delete(['1', '3']);
+
+    requests[0]!.resolve(testData);
+
+    await fetched;
+
+    expect(map.getByKey('2')).toBe(testData[1]);
+    expect(map.getByKey('1')).toBeInstanceOf(Promise);
+    expect(map.getByKey('3')).toBeInstanceOf(Promise);
+  });
+
+  it('should cache a key again that was deleted before its fetch started', async () => {
+    const { map, requests } = createMap();
+
+    map.delete('1');
+
+    const fetched = map.getByKey('1');
+
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+
+    requests[0]!.resolve(testData);
+
+    await fetched;
+
+    expect(map.getByKey('1')).toBe(testData[0]);
   });
 });

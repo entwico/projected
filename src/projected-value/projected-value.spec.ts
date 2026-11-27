@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ProjectedValue, createProjectedValue } from './projected-value.js';
 
@@ -187,5 +187,207 @@ describe('refresh', () => {
 
     // should only have fetched twice (initial + one refresh)
     expect(fetchCount).toBe(2);
+  });
+});
+
+describe('fetching', () => {
+  it('should share one fetch between concurrent get calls', async () => {
+    const fetch = vi.fn(async () => structuredClone(testValue));
+    const value = new ProjectedValue({ value: fetch });
+
+    const first = value.get();
+    const second = value.get();
+
+    expect(second).toBe(first);
+
+    await first;
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('should reject instead of throwing when the value function throws synchronously', async () => {
+    const value = new ProjectedValue({
+      value: (): typeof testValue => {
+        throw new Error('sync error');
+      },
+    });
+
+    const result = value.get();
+
+    expect(result).toBeInstanceOf(Promise);
+
+    await expect(result).rejects.toThrow('sync error');
+  });
+
+  it('should fetch again after a failed fetch', async () => {
+    const fetch = vi.fn<() => Promise<typeof testValue>>()
+      .mockRejectedValueOnce(new Error('fetch error'))
+      .mockResolvedValue(testValue);
+
+    const value = new ProjectedValue({ value: fetch });
+
+    await expect(value.get()).rejects.toThrow('fetch error');
+
+    expect(await value.get()).toBe(testValue);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([0, '', false, null])('should cache the falsy value %j', async (falsy) => {
+    const fetch = vi.fn(() => falsy);
+    const value = new ProjectedValue({ value: fetch });
+
+    await value.get();
+
+    expect(value.get()).toBe(falsy);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('cache: false', () => {
+  it('should fetch on every get', async () => {
+    const fetch = vi.fn(() => structuredClone(testValue));
+    const value = new ProjectedValue({ value: fetch, cache: false });
+
+    const first = await value.get();
+    const second = value.get();
+
+    expect(second).toBeInstanceOf(Promise);
+    expect(await second).not.toBe(first);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('should resolve refresh to the fresh value without keeping it', async () => {
+    const fetch = vi.fn(() => structuredClone(testValue));
+    const value = new ProjectedValue({ value: fetch, cache: false });
+
+    expect(await value.refresh()).toEqual(testValue);
+    expect(value.get()).toBeInstanceOf(Promise);
+  });
+});
+
+describe('stale-while-revalidate', () => {
+  it('should serve the stale value synchronously while a refresh is in flight', async () => {
+    const pending = Promise.withResolvers<string>();
+    const fetch = vi.fn<() => Promise<string>>()
+      .mockResolvedValueOnce('stale')
+      .mockReturnValueOnce(pending.promise);
+
+    const value = new ProjectedValue({ value: fetch });
+
+    await value.get();
+
+    const refresh = value.refresh();
+
+    expect(value.get()).toBe('stale');
+
+    pending.resolve('fresh');
+
+    await refresh;
+
+    expect(value.get()).toBe('fresh');
+  });
+
+  it('should fetch again on get after clear, even though a value was cached', async () => {
+    const fetch = vi.fn(() => structuredClone(testValue));
+    const value = new ProjectedValue({ value: fetch });
+
+    await value.get();
+
+    value.clear();
+
+    expect(value.get()).toBeInstanceOf(Promise);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('fetches that were overtaken', () => {
+  function createValue() {
+    const requests: PromiseWithResolvers<string>[] = [];
+
+    const value = new ProjectedValue({
+      value: () => {
+        const request = Promise.withResolvers<string>();
+
+        requests.push(request);
+
+        return request.promise;
+      },
+    });
+
+    return { value, requests };
+  }
+
+  it('should not cache what was fetched before a clear', async () => {
+    const { value, requests } = createValue();
+
+    const before = value.get();
+
+    value.clear();
+
+    const after = value.get();
+
+    requests[0]!.resolve('before clear');
+
+    // the caller that asked before the clear still gets its answer
+    expect(await before).toBe('before clear');
+    expect(value.get()).toBe(after);
+
+    requests[1]!.resolve('after clear');
+
+    expect(await after).toBe('after clear');
+    expect(value.get()).toBe('after clear');
+  });
+
+  it('should keep the value fetched after a clear when the earlier fetch answers last', async () => {
+    const { value, requests } = createValue();
+
+    const before = value.get();
+
+    value.clear();
+
+    const after = value.get();
+
+    requests[1]!.resolve('after clear');
+    await after;
+
+    requests[0]!.resolve('before clear');
+    await before;
+
+    expect(value.get()).toBe('after clear');
+  });
+
+  it('should stay empty when the fetch from before a clear fails', async () => {
+    const { value, requests } = createValue();
+
+    const before = value.get();
+
+    value.clear();
+
+    const after = value.get();
+
+    requests[0]!.reject(new Error('fetch error'));
+
+    await expect(before).rejects.toThrow('fetch error');
+
+    expect(value.get()).toBe(after);
+
+    requests[1]!.resolve('after clear');
+
+    expect(await after).toBe('after clear');
+  });
+
+  it('should keep the refreshed value when the fetch it overtook answers last', async () => {
+    const { value, requests } = createValue();
+
+    const initial = value.get();
+    const refreshed = value.refresh();
+
+    requests[1]!.resolve('refreshed');
+    await refreshed;
+
+    requests[0]!.resolve('initial');
+    await initial;
+
+    expect(value.get()).toBe('refreshed');
   });
 });

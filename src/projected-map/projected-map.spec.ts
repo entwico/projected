@@ -1344,3 +1344,287 @@ describe('tombstones', () => {
     expect((map.getByKey('4') as TestObject).id).toBe('4');
   });
 });
+
+describe('fetching', () => {
+  it('should share one fetch between concurrent reads', async () => {
+    const values = vi.fn(async () => testData);
+    const map = new ProjectedMap<string, TestObject>({ key: (item) => item.id, values });
+
+    const [one, many, all] = await Promise.all([map.getByKey('1'), map.getByKeys(['2', '3']), map.getAll()]);
+
+    expect(one).toBe(testData[0]);
+    expect(many).toEqual([testData[1], testData[2]]);
+    expect(all).toHaveLength(5);
+    expect(values).toHaveBeenCalledTimes(1);
+  });
+
+  it('should reject instead of throwing when values throws synchronously', async () => {
+    const map = new ProjectedMap<string, TestObject>({
+      key: (item) => item.id,
+      values: () => {
+        throw new Error('sync error');
+      },
+    });
+
+    const result = map.getAll();
+
+    expect(result).toBeInstanceOf(Promise);
+
+    await expect(result).rejects.toThrow('sync error');
+  });
+
+  it('should fetch again after a failed fetch', async () => {
+    const values = vi.fn<() => Promise<TestObject[]>>()
+      .mockRejectedValueOnce(new Error('fetch error'))
+      .mockResolvedValue(testData);
+
+    const map = new ProjectedMap<string, TestObject>({ key: (item) => item.id, values });
+
+    await expect(map.getByKey('1')).rejects.toThrow('fetch error');
+
+    expect(await map.getByKey('1')).toBe(testData[0]);
+    expect(values).toHaveBeenCalledTimes(2);
+  });
+
+  it('should fetch again on the next read after clear', async () => {
+    const values = vi.fn(() => testData);
+    const map = new ProjectedMap<string, TestObject>({ key: (item) => item.id, values });
+
+    await map.getAll();
+
+    map.clear();
+
+    const result = map.getByKey('1');
+
+    expect(result).toBeInstanceOf(Promise);
+    expect(await result).toBe(testData[0]);
+    expect(values).toHaveBeenCalledTimes(2);
+  });
+
+  it('should serve the stale map synchronously while a full refresh is in flight', async () => {
+    const pending = Promise.withResolvers<TestObject[]>();
+    const values = vi.fn<() => MaybePromiseOfItems>()
+      .mockReturnValueOnce(testData)
+      .mockReturnValueOnce(pending.promise);
+
+    const map = new ProjectedMap<string, TestObject>({ key: (item) => item.id, values });
+
+    await map.getAll();
+
+    const refresh = map.refresh();
+
+    expect(map.getByKey('1')).toBe(testData[0]);
+
+    pending.resolve([{ id: '1', title: 'fresh' }]);
+
+    await refresh;
+
+    expect(map.getAll()).toEqual([{ id: '1', title: 'fresh' }]);
+  });
+
+  it('should still run a queued partial refresh when the full refresh in flight fails', async () => {
+    const full = Promise.withResolvers<TestObject[]>();
+    const calls: (string[] | undefined)[] = [];
+
+    const map = new ProjectedMap<string, TestObject>({
+      key: (item) => item.id,
+      values: (keys) => {
+        calls.push(keys);
+
+        if (calls.length === 1) {
+          return testData;
+        }
+
+        return keys === undefined ? full.promise : [{ id: '2', title: 'fresh' }];
+      },
+    });
+
+    await map.getAll();
+
+    const fullRefresh = map.refresh();
+    const partialRefresh = map.refresh('2');
+
+    full.reject(new Error('full error'));
+
+    await expect(fullRefresh).rejects.toThrow('full error');
+
+    const merged = await partialRefresh;
+
+    expect(calls).toEqual([undefined, undefined, ['2']]);
+    expect(merged.get('2')).toEqual({ id: '2', title: 'fresh' });
+    expect(merged.get('1')).toBe(testData[0]);
+  });
+});
+
+type MaybePromiseOfItems = TestObject[] | Promise<TestObject[]>;
+
+describe('cache: false', () => {
+  it('should fetch on every read', async () => {
+    const values = vi.fn(() => testData);
+    const map = new ProjectedMap<string, TestObject>({ key: (item) => item.id, values, cache: false });
+
+    expect(await map.getByKey('1')).toBe(testData[0]);
+
+    const second = map.getAll();
+
+    expect(second).toBeInstanceOf(Promise);
+    expect(await second).toHaveLength(5);
+    expect(values).toHaveBeenCalledTimes(2);
+  });
+
+  it('should run a keyed refresh as a full fetch, as there is no map to merge into', async () => {
+    const values = vi.fn((_keys: string[] | undefined) => testData);
+    const map = new ProjectedMap<string, TestObject>({ key: (item) => item.id, values, cache: false });
+
+    await map.getAll();
+
+    const fresh = await map.refresh('2');
+
+    expect(fresh.size).toBe(5);
+    expect(values.mock.calls).toEqual([[undefined], [undefined]]);
+  });
+});
+
+describe('returned collections', () => {
+  it('should hand out a copy from getAllAsMap', async () => {
+    const map = new ProjectedMap<string, TestObject>({ key: (item) => item.id, values: () => testData });
+
+    const copy = (await map.getAllAsMap()) as Map<string, TestObject>;
+
+    copy.delete('1');
+    copy.set('9', { id: '9', title: 'title9' });
+
+    expect(map.getByKey('1')).toBe(testData[0]);
+    expect(map.getByKey('9')).toBeUndefined();
+    expect(map.getAllAsMap()).not.toBe(map.getAllAsMap());
+  });
+
+  it('should keep the order returned by values when no sort is given', async () => {
+    const map = new ProjectedMap<string, TestObject>({
+      key: (item) => item.id,
+      values: () => testData.toReversed(),
+    });
+
+    const all = await map.getAll();
+    const allAsMap = await map.getAllAsMap();
+
+    expect(all.map((item) => item.id)).toEqual(['5', '4', '3', '2', '1']);
+    expect(allAsMap.keys().toArray()).toEqual(['5', '4', '3', '2', '1']);
+  });
+
+  it('should keep positions and append new keys on partial refresh when no sort is given', async () => {
+    const pool: TestObject[] = [...testData, { id: '0', title: 'title0' }];
+
+    const map = new ProjectedMap<string, TestObject>({
+      key: (item) => item.id,
+      values: (keys) => (keys === undefined ? testData : pool.filter((item) => keys.includes(item.id))),
+    });
+
+    await map.getAll();
+    await map.refresh(['0', '3']);
+
+    expect((map.getAll() as TestObject[]).map((item) => item.id)).toEqual(['1', '2', '3', '4', '5', '0']);
+  });
+});
+
+describe('clear during a full fetch', () => {
+  function createMap() {
+    const requests: PromiseWithResolvers<TestObject[]>[] = [];
+
+    const map = new ProjectedMap<string, TestObject>({
+      key: (item) => item.id,
+      values: () => {
+        const request = Promise.withResolvers<TestObject[]>();
+
+        requests.push(request);
+
+        return request.promise;
+      },
+    });
+
+    return { map, requests };
+  }
+
+  it('should fetch again for a read after the clear instead of joining the fetch from before it', async () => {
+    const { map, requests } = createMap();
+
+    const before = map.getByKey('1');
+
+    map.clear();
+
+    const after = map.getByKey('1');
+
+    requests[0]!.resolve([{ id: '1', title: 'before clear' }]);
+
+    // the caller that asked before the clear still gets its answer
+    expect(await before).toEqual({ id: '1', title: 'before clear' });
+
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+
+    requests[1]!.resolve([{ id: '1', title: 'after clear' }]);
+
+    expect(await after).toEqual({ id: '1', title: 'after clear' });
+    expect(map.getByKey('1')).toEqual({ id: '1', title: 'after clear' });
+  });
+
+  it('should not cache what was fetched before the clear when nothing was read since', async () => {
+    const { map, requests } = createMap();
+
+    const before = map.getAll();
+
+    map.clear();
+
+    requests[0]!.resolve(testData);
+
+    await before;
+
+    expect(map.getAll()).toBeInstanceOf(Promise);
+    expect(requests).toHaveLength(2);
+  });
+
+  it('should not cache what a refresh fetched before the clear', async () => {
+    const { map, requests } = createMap();
+
+    const initial = map.getAll();
+
+    requests[0]!.resolve(testData);
+    await initial;
+
+    const refresh = map.refresh();
+
+    map.clear();
+
+    const after = map.getByKey('1');
+
+    requests[1]!.resolve([{ id: '1', title: 'before clear' }]);
+
+    const refreshed = await refresh;
+
+    expect(refreshed.get('1')).toEqual({ id: '1', title: 'before clear' });
+
+    await vi.waitFor(() => expect(requests).toHaveLength(3));
+
+    requests[2]!.resolve([{ id: '1', title: 'after clear' }]);
+
+    expect(await after).toEqual({ id: '1', title: 'after clear' });
+  });
+
+  it('should fetch again for a read after the clear when the fetch from before it fails', async () => {
+    const { map, requests } = createMap();
+
+    const before = map.getAll();
+
+    map.clear();
+
+    const after = map.getByKey('1');
+
+    requests[0]!.reject(new Error('fetch error'));
+
+    await expect(before).rejects.toThrow('fetch error');
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+
+    requests[1]!.resolve(testData);
+
+    expect(await after).toBe(testData[0]);
+  });
+});

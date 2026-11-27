@@ -135,16 +135,22 @@ export class Resolver<K, V> {
     const resolved = new Map<K, Maybe<V>>();
 
     const consume: Consumer<K, V> = (results) => {
-      results.forEach((value, key) => {
-        if ('error' in value) {
+      for (const [key, result] of results) {
+        // a request carries the keys of other callers too: only the own keys settle this one
+        if (!pending.has(key)) {
+          continue;
+        }
+
+        if ('error' in result) {
           this.consumers.delete(consume);
-          deferred.reject(value.error);
+          deferred.reject(result.error);
+
           return;
         }
 
-        resolved.set(key, value.value);
+        resolved.set(key, result.value);
         pending.delete(key);
-      });
+      }
 
       if (pending.size > 0) {
         return;

@@ -8,9 +8,12 @@ type CacheState<K, V> =
   | { status: 'pending'; promise: Promise<ReadonlyMap<K, ReadonlyDeep<V>>> }
   | { status: 'resolved'; map: Map<K, V> };
 
-type Inflight<K, V> =
-  | { type: 'full'; promise: Promise<ReadonlyMap<K, ReadonlyDeep<V>>> }
-  | { type: 'partial'; promise: Promise<ReadonlyMap<K, ReadonlyDeep<V>>> };
+type Inflight<K, V> = {
+  type: 'full' | 'partial';
+  promise: Promise<ReadonlyMap<K, ReadonlyDeep<V>>>;
+  // set by a clear() during the fetch: its result goes to the callers that waited for it, not into the cache
+  stale: boolean;
+};
 
 type ResolvedMap<K, V> = ReadonlyMap<K, ReadonlyDeep<V>>;
 
@@ -87,11 +90,11 @@ export class ProjectedMap<K, V> {
   // ---------------------------------------------------------------------------
 
   private scheduleFull(): Promise<ResolvedMap<K, V>> {
-    if (this._inflight?.type === 'full') {
+    if (this._inflight?.type === 'full' && !this._inflight.stale) {
       return this._inflight.promise;
     }
 
-    if (this._inflight?.type === 'partial') {
+    if (this._inflight !== null) {
       this._pendingFull = true;
       this._pendingPartial.clear();
       this.clearDebounce();
@@ -182,24 +185,28 @@ export class ProjectedMap<K, V> {
     const deferred = this._pendingDeferred ?? new Deferred<ResolvedMap<K, V>>();
 
     this._pendingDeferred = null;
-    this._inflight = { type: 'full', promise: deferred.promise };
+    const inflight: Inflight<K, V> = { type: 'full', promise: deferred.promise, stale: false };
+
+    this._inflight = inflight;
 
     // transition to pending so concurrent gets join this fetch
     if (this._state.status === 'empty') {
       this._state = { status: 'pending', promise: deferred.promise };
     }
 
-    void this.runFull(deferred);
+    void this.runFull(inflight, deferred);
 
     return deferred.promise;
   }
 
-  private async runFull(deferred: Deferred<ResolvedMap<K, V>>): Promise<void> {
+  private async runFull(inflight: Inflight<K, V>, deferred: Deferred<ResolvedMap<K, V>>): Promise<void> {
     try {
       const array = await Promise.try(() => this._values(undefined));
       const map = this.buildFullMap(array);
 
-      this._state = this._shouldCache ? { status: 'resolved', map } : { status: 'empty' };
+      if (!inflight.stale) {
+        this._state = this._shouldCache ? { status: 'resolved', map } : { status: 'empty' };
+      }
 
       // clear inflight + drain before resolving so awaiters observe the post-op state
       this._inflight = null;
@@ -230,7 +237,7 @@ export class ProjectedMap<K, V> {
 
     this._pendingPartial.clear();
 
-    this._inflight = { type: 'partial', promise: deferred.promise };
+    this._inflight = { type: 'partial', promise: deferred.promise, stale: false };
 
     void this.runPartial(keys, deferred);
 
@@ -409,6 +416,11 @@ export class ProjectedMap<K, V> {
   /** Clears cached values so the next access refetches. */
   clear() {
     this._state = { status: 'empty' };
+    this._tombstones.clear();
+
+    if (this._inflight !== null) {
+      this._inflight.stale = true;
+    }
   }
 
   refresh(): Promise<ResolvedMap<K, V>>;
